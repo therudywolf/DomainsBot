@@ -7,8 +7,8 @@ import pathlib
 from functools import wraps
 from typing import Any, Dict, Tuple
 
-TTL_SECONDS = 21600
-MAXSIZE = 20000
+TTL_SECONDS = 1
+MAXSIZE = 1
 
 _DB_PATH = pathlib.Path(__file__).resolve().parent.parent.joinpath("domain_cache.db")
 _LOCK = asyncio.Lock()
