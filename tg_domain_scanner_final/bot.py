@@ -155,7 +155,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
             )
 
         for domain, dns_info, ssl_info, waf_enabled in collected:
-            gost_val = "Да" if ssl_info.get("gost") else "Нет"
+            gost_val = "Да" if ssl_info.get("IsGOST") else "Нет"
             waf_val = "Да" if waf_enabled else "Нет"
 
             row_base = [
