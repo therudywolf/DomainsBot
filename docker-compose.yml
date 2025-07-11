@@ -1,0 +1,13 @@
+version: '3'
+services:
+  gostsslcheck:
+    build: ./GostSSLCheck
+    restart: unless-stopped
+
+  tgscanner:
+    build: ./tg_domain_scanner_final
+    restart: unless-stopped
+    depends_on:
+      - gostsslcheck
+    environment:
+      - GOST_CHECK_URL=http://gostsslcheck:8080/check

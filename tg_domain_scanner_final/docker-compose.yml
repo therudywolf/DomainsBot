@@ -1,0 +1,15 @@
+services:
+  gostsslcheck:
+    build: ./GostSSLCheck
+    container_name: gostsslcheck
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+  tgscanner:
+    build: ./tg_domain_scanner_final
+    container_name: tgscanner
+    restart: unless-stopped
+    depends_on:
+      - gostsslcheck
+    environment:
+      - GOST_CHECK_URL=http://gostsslcheck:8080/check
