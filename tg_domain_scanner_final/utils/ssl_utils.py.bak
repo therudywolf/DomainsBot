@@ -92,15 +92,6 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
     except x509.ExtensionNotFound:
         pass
 
-    # determine certificate validity period with timezone-aware datetimes
-    try:
-        not_before = cert.not_valid_before_utc  # cryptography ≥42
-        not_after = cert.not_valid_after_utc
-    except AttributeError:
-        from datetime import timezone
-        not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
-        not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
-
     if is_gost_remote is None:
         is_gost = _cert_is_gost(cert) or _cipher_is_gost(negotiated_cipher)
     else:
@@ -110,8 +101,8 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
         "CN": cn,
         "SAN": san,
         "Issuer": cert.issuer.rfc4514_string(),
-        "NotBefore": not_before,
-        "NotAfter": not_after,
+        "NotBefore": cert.not_valid_before,
+        "NotAfter": cert.not_valid_after,
         "SigAlg": cert.signature_algorithm_oid._name,
         "Cipher": negotiated_cipher,
         "IsGOST": is_gost,
