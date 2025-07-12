@@ -1,6 +1,6 @@
 aiogram==3.*
 dnspython==2.*
-cryptography==42.*
+cryptography==45.*
 aiohttp==3.*
 python-dotenv==1.*
 python-whois==0.9.*
