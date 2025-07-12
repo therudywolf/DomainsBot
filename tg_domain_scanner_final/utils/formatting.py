@@ -55,6 +55,6 @@ def build_report(
         f"{ssl.get('NotAfter').date() if ssl.get('NotAfter') else '—'}"
     )
     lines.append(f"WAF: {'Включён' if waf else 'Нет'}")
-    lines.append(f"ГОСТ‑сертификат: {'✅' if ssl.get('IsGOST') else '✖️'}")
+    lines.append(f"ГОСТ‑сертификат: {'✅' if ssl.get("gost") else '✖️'}")
     lines.append("──────────")
     return "\n".join(lines)
