@@ -55,7 +55,7 @@ docker compose up --build -d
 
 ## 🕊️ Автор
 
-[rudywolf](https://github.com/therudywolf)
+[therudywolf](https://github.com/therudywolf)
 
 По всем вопросам или идеям: issue, pull request, или личка в Telegram.
 

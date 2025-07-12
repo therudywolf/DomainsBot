@@ -7,7 +7,7 @@ import pathlib
 from functools import wraps
 from typing import Any, Dict, Tuple
 
-TTL_SECONDS = 21600
+TTL_SECONDS = 3600
 MAXSIZE = 20000
 
 _DB_PATH = pathlib.Path(__file__).resolve().parent.parent.joinpath("domain_cache.db")
