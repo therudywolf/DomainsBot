@@ -1,15 +1,14 @@
-
 from utils.cache import ttl_cache
 from typing import Sequence
 import aiohttp, asyncio
 
+# Разрешён только один «безобидный» мониторинговый запрос
 PAYLOADS: Sequence[str] = (
-    "/?<script>alert('x')</script>",
-    "/etc/passwd",
-    "/?id=1+union+select+1,2,3",
-    "/../../../boot.ini",
+    "/?monitoring=test_query_for_policy",
 )
+
 BLOCK_CODES = {403, 406, 429, 501, 502, 503}
+
 
 async def _fetch(session: aiohttp.ClientSession, url: str, timeout: int):
     """Return tuple(status, body_len). Guarantees connection closed."""
@@ -19,6 +18,7 @@ async def _fetch(session: aiohttp.ClientSession, url: str, timeout: int):
         except Exception:
             body = ""
         return resp.status, len(body)
+
 
 @ttl_cache()
 async def test_waf(domain: str, timeout: int = 6) -> bool:
