@@ -1,14 +1,19 @@
+"""
+Утилиты для безопасной отправки сообщений в Telegram.
 
-"""Utility helpers for Telegram messages.
-
-safe_send_text splits long messages into chunks <=4096 symbols
-and safely sends them preserving kwargs like parse_mode, reply_markup etc.
+Модуль содержит функции для отправки длинных сообщений с автоматическим
+разбиением на части (лимит Telegram - 4096 символов на сообщение).
 """
 
+import logging
 from typing import Sequence, Union
 from aiogram import Bot
 
+logger = logging.getLogger(__name__)
+
+# Максимальная длина сообщения в Telegram (в символах)
 MAX_LEN = 4096
+
 
 async def safe_send_text(
     bot: Bot,
@@ -16,20 +21,44 @@ async def safe_send_text(
     text: Union[str, Sequence[str]],
     **kwargs
 ) -> None:
-    """Send message(s) splitting by 4096‑byte limit.
-
-    *text* can be:
-    • str — will be sent as is;
-    • list/tuple/iterable[str] — joined with line breaks.
-    Any additional **kwargs (parse_mode, reply_markup…) will be
-    forwarded to :py:meth:`aiogram.Bot.send_message`.
     """
-    # Normalise to string
+    Безопасно отправляет сообщение(я), разбивая длинные тексты на части.
+    
+    Автоматически разбивает текст на части по 4096 символов (лимит Telegram)
+    и отправляет их последовательно. Сохраняет все дополнительные параметры
+    (parse_mode, reply_markup и т.д.) для каждого сообщения.
+    
+    Args:
+        bot: Экземпляр бота для отправки сообщений
+        chat_id: ID чата или username получателя
+        text: Текст для отправки. Может быть:
+            - str: отправляется как есть
+            - list/tuple/iterable[str]: объединяется через перенос строки
+        **kwargs: Дополнительные параметры для send_message:
+            - parse_mode: режим парсинга (HTML, Markdown и т.д.)
+            - reply_markup: клавиатура или кнопки
+            - и другие параметры aiogram.Bot.send_message
+    
+    Raises:
+        aiogram.exceptions.TelegramAPIError: При ошибках API Telegram
+    """
+    # Нормализуем текст к строке
     if isinstance(text, (list, tuple)):
+        # Если передан список/кортеж, объединяем через перенос строки
         text = "\n".join(str(x) for x in text)
     elif not isinstance(text, str):
+        # Если передан другой тип, конвертируем в строку
         text = str(text)
-
+    
+    # Разбиваем текст на части и отправляем
     for offset in range(0, len(text), MAX_LEN):
         chunk = text[offset : offset + MAX_LEN]
-        await bot.send_message(chat_id, chunk, **kwargs)
+        try:
+            await bot.send_message(chat_id, chunk, **kwargs)
+        except Exception as e:
+            logger.error(
+                f"Ошибка при отправке сообщения в чат {chat_id}: {e}",
+                exc_info=True
+            )
+            # Пробуем отправить следующую часть, но логируем ошибку
+            raise

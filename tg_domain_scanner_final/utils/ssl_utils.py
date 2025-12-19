@@ -1,11 +1,29 @@
+"""
+Утилиты для проверки SSL сертификатов и определения GOST шифрования.
 
-from utils.cache import ttl_cache
-import asyncio, ssl, os, random, typing as t
+Модуль содержит функции для:
+- Проверки SSL сертификатов доменов
+- Определения наличия GOST шифрования (через удаленные контейнеры)
+- Получения информации о сертификатах (обычный и GOST TLS)
+"""
+
+import asyncio
+import logging
+import ssl
+import os
+import random
 from typing import Dict, Any, Optional, List
+from datetime import timezone
+
 import aiohttp
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import NameOID
+
+from utils.cache import ttl_cache
+from config import settings
+
+logger = logging.getLogger(__name__)
 
 # ----------------------------
 #  GOST detection helpers
@@ -13,107 +31,285 @@ from cryptography.x509.oid import NameOID
 GOST_OID_PREFIX = "1.2.643."
 GOST_CIPHERS = "GOST2012-GOST8912-GOST89"
 
+
 def _cert_is_gost(cert: x509.Certificate) -> bool:
-    """Heuristic: certificate signature algorithm OID starts with GOST prefix."""
+    """Проверяет, является ли сертификат GOST по OID алгоритма подписи.
+    
+    Args:
+        cert: Сертификат для проверки
+        
+    Returns:
+        True если сертификат использует GOST алгоритм
+    """
     return cert.signature_algorithm_oid.dotted_string.startswith(GOST_OID_PREFIX)
 
+
 def _cipher_is_gost(cipher_name: str) -> bool:
+    """Проверяет, используется ли GOST шифр по имени.
+    
+    Args:
+        cipher_name: Название шифра
+        
+    Returns:
+        True если шифр является GOST
+    """
     return any(c in cipher_name for c in GOST_CIPHERS.split("-"))
+
 
 # ----------------------------
 #  Remote GOST check
 # ----------------------------
-# 1) If explicit GOST_CHECK_URL defined – use only it.
-# 2) Else, list of container hostnames in GOSTSSL_HOSTS (comma‑separated).
-#    By default single "gostsslcheck".
+# 1) Если задан GOST_CHECK_URL - используем только его
+# 2) Иначе - список hostnames контейнеров из GOSTSSL_HOSTS (через запятую)
+#    По умолчанию "gostsslcheck"
 if os.getenv("GOST_CHECK_URL"):
     _endpoints: List[str] = [os.getenv("GOST_CHECK_URL")]
 else:
     _hosts: List[str] = [h.strip() for h in os.getenv("GOSTSSL_HOSTS", "gostsslcheck").split(',') if h.strip()]
     _endpoints: List[str] = [f"http://{h}:8080/check" for h in _hosts]
 
-async def _remote_is_gost(domain: str, timeout: int = 20) -> Optional[bool]:
-    """Ask one of the GostSSLCheck instances whether certificate is GOST.
-    Returns True/False if service responded, or None if unreachable/timeout.
+# Глобальный connector для переиспользования соединений
+_gost_connector: Optional[aiohttp.TCPConnector] = None
+
+
+def _get_gost_connector() -> aiohttp.TCPConnector:
+    """Получает или создает глобальный connector для Gost запросов.
+    
+    Returns:
+        TCPConnector для переиспользования соединений
+    """
+    global _gost_connector
+    if _gost_connector is None or _gost_connector.closed:
+        _gost_connector = aiohttp.TCPConnector(
+            limit=20,
+            limit_per_host=5,
+            force_close=False,  # Переиспользование соединений
+            ttl_dns_cache=300,
+        )
+    return _gost_connector
+
+
+async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optional[bool]:
+    """Проверяет наличие GOST сертификата через удаленные контейнеры.
+    
+    Использует retry логику: пробует все доступные endpoints по очереди,
+    если один не отвечает, переключается на следующий.
+    
+    Args:
+        domain: Домен для проверки
+        timeout: Таймаут запроса (по умолчанию из settings)
+        
+    Returns:
+        True/False если сервис ответил, None если все endpoints недоступны
     """
     if not _endpoints:
+        logger.warning("Нет настроенных endpoints для проверки GOST")
         return None
 
-    url = random.choice(_endpoints)
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=timeout),
-            connector=aiohttp.TCPConnector(limit=20, force_close=True)
-        ) as session:
-            async with session.get(url, params={"domain": domain}) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return bool(data.get("is_gost"))
-    except Exception:
-        return None
+    timeout = timeout or settings.GOST_CHECK_TIMEOUT
+    timeout_obj = aiohttp.ClientTimeout(total=timeout)
+    
+    # Перемешиваем endpoints для распределения нагрузки
+    endpoints = _endpoints.copy()
+    random.shuffle(endpoints)
+    
+    connector = _get_gost_connector()
+    last_error: Optional[Exception] = None
+    
+    # Пробуем каждый endpoint
+    for attempt, url in enumerate(endpoints, 1):
+        try:
+            async with aiohttp.ClientSession(
+                timeout=timeout_obj,
+                connector=connector
+            ) as session:
+                logger.debug(f"Проверка GOST для {domain} через {url} (попытка {attempt}/{len(endpoints)})")
+                
+                async with session.get(url, params={"domain": domain}) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        result = bool(data.get("is_gost"))
+                        logger.debug(f"GOST проверка для {domain}: {result} (через {url})")
+                        return result
+                    else:
+                        logger.warning(f"GOST endpoint {url} вернул статус {resp.status} для {domain}")
+                        last_error = Exception(f"HTTP {resp.status}")
+                        
+        except asyncio.TimeoutError:
+            logger.warning(f"Таймаут при проверке GOST для {domain} через {url}")
+            last_error = asyncio.TimeoutError("Timeout")
+        except aiohttp.ClientError as e:
+            logger.warning(f"Ошибка клиента при проверке GOST для {domain} через {url}: {e}")
+            last_error = e
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при проверке GOST для {domain} через {url}: {e}", exc_info=True)
+            last_error = e
+        
+        # Небольшая задержка перед следующей попыткой
+        if attempt < len(endpoints):
+            await asyncio.sleep(settings.GOST_RETRY_DELAY)
+    
+    logger.error(f"Все GOST endpoints недоступны для {domain}. Последняя ошибка: {last_error}")
     return None
+
+
+async def _get_gost_certificate_info(domain: str, port: int = 443) -> Optional[Dict[str, Any]]:
+    """Получает информацию о GOST TLS сертификате.
+    
+    Пытается подключиться с GOST шифрами для получения GOST сертификата.
+    
+    Args:
+        domain: Домен для проверки
+        port: Порт для подключения
+        
+    Returns:
+        Словарь с датами GOST сертификата или None если не удалось получить
+    """
+    try:
+        # Создаем SSL контекст с поддержкой GOST
+        ctx = ssl.create_default_context()
+        # Пытаемся использовать GOST шифры
+        ctx.set_ciphers('GOST2012-GOST8912-GOST89:!aNULL:!eNULL')
+        
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(domain, port, ssl=ctx),
+                timeout=settings.GOST_CHECK_TIMEOUT
+            )
+        except (ssl.SSLError, asyncio.TimeoutError, OSError):
+            # Если не удалось подключиться с GOST - возможно домен не поддерживает
+            return None
+        
+        try:
+            ssl_obj = writer.get_extra_info("ssl_object")
+            if ssl_obj:
+                cert_bin = ssl_obj.getpeercert(True)
+                if cert_bin:
+                    cert = x509.load_der_x509_certificate(cert_bin, default_backend())
+                    
+                    # Проверяем, что это действительно GOST сертификат
+                    if _cert_is_gost(cert):
+                        try:
+                            not_before = cert.not_valid_before_utc
+                            not_after = cert.not_valid_after_utc
+                        except AttributeError:
+                            not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
+                            not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
+                        
+                        return {
+                            "GostNotBefore": not_before,
+                            "GostNotAfter": not_after,
+                        }
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    except Exception as e:
+        logger.debug(f"Не удалось получить GOST сертификат для {domain}: {e}")
+    
+    return None
+
 
 # ----------------------------
 #  Main entry point
 # ----------------------------
-@ttl_cache(ttl=3600)  # cache for 1 hour
+@ttl_cache(ttl=3600)  # Кэш на 1 час
 async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
-    """Return SSL info for *domain*.
-
-    Keys: CN, SAN, Issuer, NotBefore, NotAfter, SigAlg, Cipher, IsGOST, gost"""
-    # Step 1: remote service
+    """Получает информацию об SSL сертификатах домена.
+    
+    Проверяет как обычный сертификат, так и GOST TLS сертификат (если доступен).
+    
+    Args:
+        domain: Домен для проверки
+        port: Порт для подключения (по умолчанию 443)
+        
+    Returns:
+        Словарь с информацией о сертификатах:
+        - CN: Common Name
+        - SAN: Subject Alternative Names
+        - Issuer: Издатель сертификата
+        - NotBefore, NotAfter: Даты действия обычного сертификата
+        - GostNotBefore, GostNotAfter: Даты действия GOST сертификата (если есть)
+        - SigAlg: Алгоритм подписи
+        - Cipher: Используемый шифр
+        - IsGOST, gost: Наличие GOST (булево)
+    """
+    # Шаг 1: Проверка через удаленный сервис
     is_gost_remote = await _remote_is_gost(domain)
-
-    # Step 2: local TLS introspection
+    
+    # Шаг 2: Локальная проверка TLS соединения
     ctx = ssl.create_default_context()
-    try:
-        reader, writer = await asyncio.open_connection(domain, port, ssl=ctx)
-    except Exception:
-        return {
-            "CN": None, "SAN": [], "Issuer": None,
-            "NotBefore": None, "NotAfter": None,
-            "SigAlg": None, "Cipher": None,
-            "IsGOST": is_gost_remote,
-            "gost": is_gost_remote,
-        }
-
-    ssl_obj = writer.get_extra_info("ssl_object")
-    cert_bin = ssl_obj.getpeercert(True)
-    negotiated_cipher = ssl_obj.cipher()[0]
-    writer.close()
-    await writer.wait_closed()
-
-    cert = x509.load_der_x509_certificate(cert_bin, default_backend())
-    cn = ", ".join([attr.value for attr in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)])
-    san = []
-    try:
-        san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
-        san = san_ext.value.get_values_for_type(x509.DNSName)
-    except x509.ExtensionNotFound:
-        pass
-
-    # determine certificate validity period with timezone-aware datetimes
-    try:
-        not_before = cert.not_valid_before_utc  # cryptography ≥42
-        not_after = cert.not_valid_after_utc
-    except AttributeError:
-        from datetime import timezone
-        not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
-        not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
-
-    if is_gost_remote is None:
-        is_gost = _cert_is_gost(cert) or _cipher_is_gost(negotiated_cipher)
-    else:
-        is_gost = is_gost_remote
-
-    return {
-        "CN": cn,
-        "SAN": san,
-        "Issuer": cert.issuer.rfc4514_string(),
-        "NotBefore": not_before,
-        "NotAfter": not_after,
-        "SigAlg": cert.signature_algorithm_oid._name,
-        "Cipher": negotiated_cipher,
-        "IsGOST": is_gost,
-        "gost": is_gost,
+    cert_info = {
+        "CN": None,
+        "SAN": [],
+        "Issuer": None,
+        "NotBefore": None,
+        "NotAfter": None,
+        "GostNotBefore": None,
+        "GostNotAfter": None,
+        "SigAlg": None,
+        "Cipher": None,
+        "IsGOST": is_gost_remote,
+        "gost": is_gost_remote,
     }
+    
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(domain, port, ssl=ctx),
+            timeout=settings.GOST_CHECK_TIMEOUT
+        )
+    except Exception as e:
+        logger.debug(f"Не удалось подключиться к {domain}:{port}: {e}")
+        return cert_info
+
+    try:
+        ssl_obj = writer.get_extra_info("ssl_object")
+        cert_bin = ssl_obj.getpeercert(True)
+        negotiated_cipher = ssl_obj.cipher()[0] if ssl_obj.cipher() else None
+
+        cert = x509.load_der_x509_certificate(cert_bin, default_backend())
+        
+        # Извлекаем CN
+        cn_attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        cert_info["CN"] = ", ".join([attr.value for attr in cn_attrs]) if cn_attrs else None
+        
+        # Извлекаем SAN
+        try:
+            san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            cert_info["SAN"] = san_ext.value.get_values_for_type(x509.DNSName)
+        except x509.ExtensionNotFound:
+            pass
+
+        # Даты действия обычного сертификата
+        try:
+            cert_info["NotBefore"] = cert.not_valid_before_utc
+            cert_info["NotAfter"] = cert.not_valid_after_utc
+        except AttributeError:
+            cert_info["NotBefore"] = cert.not_valid_before.replace(tzinfo=timezone.utc)
+            cert_info["NotAfter"] = cert.not_valid_after.replace(tzinfo=timezone.utc)
+
+        cert_info["Issuer"] = cert.issuer.rfc4514_string()
+        cert_info["SigAlg"] = cert.signature_algorithm_oid._name if hasattr(cert.signature_algorithm_oid, '_name') else str(cert.signature_algorithm_oid)
+        cert_info["Cipher"] = negotiated_cipher
+        
+        # Определяем GOST
+        if is_gost_remote is None:
+            # Если удаленная проверка не сработала, используем локальную эвристику
+            is_gost = _cert_is_gost(cert) or (negotiated_cipher and _cipher_is_gost(negotiated_cipher))
+        else:
+            is_gost = is_gost_remote
+        
+        cert_info["IsGOST"] = is_gost
+        cert_info["gost"] = is_gost
+        
+    finally:
+        writer.close()
+        await writer.wait_closed()
+    
+    # Шаг 3: Пытаемся получить информацию о GOST TLS сертификате
+    if is_gost:
+        gost_cert_info = await _get_gost_certificate_info(domain, port)
+        if gost_cert_info:
+            cert_info["GostNotBefore"] = gost_cert_info.get("GostNotBefore")
+            cert_info["GostNotAfter"] = gost_cert_info.get("GostNotAfter")
+    
+    return cert_info

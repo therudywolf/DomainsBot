@@ -5,26 +5,51 @@ services:
     restart: unless-stopped
     ports:
       - "8081:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   gostsslcheck2:
     build: ./GostSSLCheck
     container_name: gostsslcheck2
     restart: unless-stopped
     ports:
       - "8082:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   gostsslcheck3:
     build: ./GostSSLCheck
     container_name: gostsslcheck3
     restart: unless-stopped
     ports:
       - "8083:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   tgscanner:
     build: ./tg_domain_scanner_final
     container_name: tgscanner
     restart: unless-stopped
     depends_on:
-      - gostsslcheck1
-      - gostsslcheck2
-      - gostsslcheck3
+      gostsslcheck1:
+        condition: service_healthy
+      gostsslcheck2:
+        condition: service_healthy
+      gostsslcheck3:
+        condition: service_healthy
     environment:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
+    volumes:
+      - ./tg_domain_scanner_final/data:/app/data
