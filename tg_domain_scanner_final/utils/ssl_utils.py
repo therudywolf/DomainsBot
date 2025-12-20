@@ -176,14 +176,6 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
                         last_error = e
                     else:
                         raise
-        finally:
-            # Закрываем connector после использования
-            if local_connector is not None and not local_connector.closed:
-                try:
-                    await local_connector.close()
-                except Exception as e:
-                    logger.debug(f"Ошибка при закрытии connector: {e}")
-                        
         except asyncio.TimeoutError:
             logger.warning(f"Таймаут при проверке GOST для {domain} через {url}")
             last_error = asyncio.TimeoutError("Timeout")
@@ -197,6 +189,13 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
         except Exception as e:
             logger.error(f"Неожиданная ошибка при проверке GOST для {domain} через {url}: {e}", exc_info=True)
             last_error = e
+        finally:
+            # Закрываем connector после использования
+            if local_connector is not None and not local_connector.closed:
+                try:
+                    await local_connector.close()
+                except Exception as e:
+                    logger.debug(f"Ошибка при закрытии connector: {e}")
         
         # Небольшая задержка перед следующей попыткой (только если не последняя)
         if attempt < len(endpoints):
