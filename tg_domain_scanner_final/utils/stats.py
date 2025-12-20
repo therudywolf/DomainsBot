@@ -115,21 +115,12 @@ def record_domain_check(domain: str, user_id: int) -> None:
         current_hour = datetime.now().hour
         _stats["activity_by_hour"][current_hour] += 1
     
-    # Используем буферизованную запись (сохраняется периодически)
-    from utils.buffered_writer import get_buffered_writer
-    
-    writer = get_buffered_writer(STATS_FILE, flush_interval=30, max_buffer_size=50)
-    
-    def update_stats(data: Dict[str, Any]) -> None:
-        """Обновляет статистику в данных."""
-        data["total_domains_checked"] = _stats["total_domains_checked"]
-        data["total_users"] = list(_stats["total_users"])
-        data["domains_checked"] = dict(_stats["domains_checked"])
-        data["errors"] = dict(_stats["errors"])
-        data["commands_used"] = dict(_stats["commands_used"])
-        data["last_update"] = datetime.now().isoformat()
-    
-    writer.add_operation(update_stats)
+    # Используем синхронное сохранение для надежности
+    # Буферизованная запись может не сохраняться вовремя
+    try:
+        _save_stats()
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении статистики после record_domain_check: {e}")
 
 
 def record_error(error_type: str) -> None:
@@ -143,21 +134,11 @@ def record_error(error_type: str) -> None:
         _stats["errors"][error_type] += 1
         _stats["errors_by_type"][error_type] += 1
     
-    # Используем буферизованную запись
-    from utils.buffered_writer import get_buffered_writer
-    
-    writer = get_buffered_writer(STATS_FILE, flush_interval=30, max_buffer_size=50)
-    
-    def update_stats(data: Dict[str, Any]) -> None:
-        """Обновляет статистику в данных."""
-        data["total_domains_checked"] = _stats["total_domains_checked"]
-        data["total_users"] = list(_stats["total_users"])
-        data["domains_checked"] = dict(_stats["domains_checked"])
-        data["errors"] = dict(_stats["errors"])
-        data["commands_used"] = dict(_stats["commands_used"])
-        data["last_update"] = datetime.now().isoformat()
-    
-    writer.add_operation(update_stats)
+    # Используем синхронное сохранение для надежности
+    try:
+        _save_stats()
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении статистики после record_error: {e}")
 
 
 def record_command(command: str) -> None:
@@ -170,21 +151,11 @@ def record_command(command: str) -> None:
     with _stats_lock:
         _stats["commands_used"][command] += 1
     
-    # Используем буферизованную запись
-    from utils.buffered_writer import get_buffered_writer
-    
-    writer = get_buffered_writer(STATS_FILE, flush_interval=30, max_buffer_size=50)
-    
-    def update_stats(data: Dict[str, Any]) -> None:
-        """Обновляет статистику в данных."""
-        data["total_domains_checked"] = _stats["total_domains_checked"]
-        data["total_users"] = list(_stats["total_users"])
-        data["domains_checked"] = dict(_stats["domains_checked"])
-        data["errors"] = dict(_stats["errors"])
-        data["commands_used"] = dict(_stats["commands_used"])
-        data["last_update"] = datetime.now().isoformat()
-    
-    writer.add_operation(update_stats)
+    # Используем синхронное сохранение для надежности
+    try:
+        _save_stats()
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении статистики после record_command: {e}")
 
 
 def get_stats() -> Dict[str, Any]:

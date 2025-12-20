@@ -92,8 +92,20 @@ class BufferedFileWriter:
             self._buffer.append(operation)
             
             # Принудительное сохранение при достижении лимита
+            # Используем синхронное сохранение для надежности
             if len(self._buffer) >= self.max_buffer_size:
-                asyncio.create_task(self.flush())
+                try:
+                    # Пытаемся получить event loop
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Если loop запущен, создаем задачу
+                        asyncio.create_task(self.flush())
+                    else:
+                        # Если loop не запущен, запускаем синхронно
+                        loop.run_until_complete(self.flush())
+                except RuntimeError:
+                    # Если нет event loop, используем синхронное сохранение
+                    self._sync_flush()
     
     async def flush(self) -> bool:
         """
@@ -130,6 +142,38 @@ class BufferedFileWriter:
             
             return success
     
+    def _sync_flush(self) -> bool:
+        """
+        Синхронно сохраняет все накопленные изменения.
+        Используется когда event loop недоступен.
+        
+        Returns:
+            True если успешно сохранено
+        """
+        with self._lock:
+            if not self._buffer:
+                return True
+            
+            # Загружаем текущие данные
+            data = self._load_func()
+            
+            # Применяем все операции из буфера
+            while self._buffer:
+                operation = self._buffer.popleft()
+                try:
+                    operation(data)
+                except Exception as e:
+                    logger.error(f"Ошибка при применении операции: {e}")
+            
+            # Сохраняем данные
+            success = self._save_func(data)
+            
+            if success:
+                self._last_flush = datetime.now()
+                logger.debug(f"Буфер синхронно сохранен в {self.file_path}")
+            
+            return success
+    
     async def _periodic_flush(self) -> None:
         """Периодически сохраняет буфер."""
         while True:
@@ -142,9 +186,18 @@ class BufferedFileWriter:
     
     def start_periodic_flush(self) -> None:
         """Запускает периодическое сохранение."""
-        if self._flush_task is None or self._flush_task.done():
-            self._flush_task = asyncio.create_task(self._periodic_flush())
-            logger.debug(f"Запущено периодическое сохранение для {self.file_path}")
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                if self._flush_task is None or self._flush_task.done():
+                    self._flush_task = asyncio.create_task(self._periodic_flush())
+                    logger.debug(f"Запущено периодическое сохранение для {self.file_path}")
+            else:
+                # Если loop не запущен, запустим позже
+                logger.debug(f"Event loop не запущен, периодическое сохранение будет запущено позже для {self.file_path}")
+        except RuntimeError:
+            # Если нет event loop, логируем предупреждение
+            logger.warning(f"Нет event loop для периодического сохранения {self.file_path}")
     
     def stop_periodic_flush(self) -> None:
         """Останавливает периодическое сохранение."""

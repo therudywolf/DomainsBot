@@ -142,19 +142,23 @@ class AsyncRateLimiter:
 
 
 # Глобальные экземпляры async rate limiter для разных типов операций
-# По умолчанию: 30 запросов в минуту для обычных операций
-_rate_limiter = AsyncRateLimiter(max_requests=30, window_seconds=60)
+# Значительно увеличены лимиты для предотвращения блокировки пользователей
+# По умолчанию: 200 запросов в минуту для обычных операций (было 30)
+_rate_limiter = AsyncRateLimiter(max_requests=200, window_seconds=60)
 
 # Более строгий лимит для тяжелых операций (проверка доменов)
-_heavy_operation_limiter = AsyncRateLimiter(max_requests=10, window_seconds=60)
+# Увеличено до 50 запросов в минуту (было 10)
+_heavy_operation_limiter = AsyncRateLimiter(max_requests=50, window_seconds=60)
 
 # Лимит для загрузки файлов
-_file_upload_limiter = AsyncRateLimiter(max_requests=5, window_seconds=300)  # 5 файлов в 5 минут
+# Увеличено до 20 файлов в 5 минут (было 5)
+_file_upload_limiter = AsyncRateLimiter(max_requests=20, window_seconds=300)
 
 # Временная блокировка пользователей при превышении лимита
+# Уменьшено до 30 секунд (было 5 минут) для более мягкой защиты
 _blocked_users: Dict[int, float] = {}  # {user_id: unblock_timestamp}
 _block_lock = asyncio.Lock()
-BLOCK_DURATION = 300  # 5 минут блокировки
+BLOCK_DURATION = 30  # 30 секунд блокировки (было 300)
 
 
 async def check_rate_limit(user_id: int, operation_type: str = "default") -> bool:
