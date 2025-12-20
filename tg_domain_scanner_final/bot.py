@@ -56,6 +56,7 @@ from config import settings
 from utils.dns_utils import fetch_dns
 from utils.ssl_utils import fetch_ssl
 from utils.waf_utils import test_waf
+from utils.waf_injection_check import test_waf_injection
 from utils.formatting import build_report, build_report_keyboard
 from utils.telegram_utils import safe_send_text
 
@@ -706,7 +707,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         async with semaphore:
             try:
                 # Параллельно получаем информацию о домене
-                dns_info, ssl_info, waf_enabled = await asyncio.gather(
+                dns_info, ssl_info, waf_result = await asyncio.gather(
                     fetch_dns(domain, settings.DNS_TIMEOUT),
                     fetch_ssl(domain),
                     test_waf(domain, user_id=user_id),
@@ -724,19 +725,27 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                     ssl_info = {}
                     record_error("SSL_ERROR")
                 
-                if isinstance(waf_enabled, Exception):
-                    logger.error(f"Ошибка WAF для {domain}: {waf_enabled}")
+                # Обрабатываем результат WAF (может быть кортеж или исключение)
+                if isinstance(waf_result, Exception):
+                    logger.error(f"Ошибка WAF для {domain}: {waf_result}")
                     waf_enabled = False
+                    waf_method = None
                     record_error("WAF_ERROR")
+                elif isinstance(waf_result, tuple) and len(waf_result) == 2:
+                    waf_enabled, waf_method = waf_result
+                else:
+                    # Обратная совместимость: если вернулся просто bool
+                    waf_enabled = bool(waf_result)
+                    waf_method = None
                 
                 # Формируем данные для отчета
-                row = (domain, dns_info, ssl_info, waf_enabled)
-                line = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+                row = (domain, dns_info, ssl_info, waf_enabled, waf_method)
+                line = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
                 
                 # Сохраняем в историю (если включено)
                 if settings.HISTORY_ENABLED:
                     try:
-                        add_check_result(domain, user_id, dns_info, ssl_info, waf_enabled)
+                        add_check_result(domain, user_id, dns_info, ssl_info, waf_enabled, waf_method)
                     except Exception as e:
                         logger.warning(f"Ошибка при сохранении в историю: {e}")
                 
@@ -819,7 +828,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                 ]
             )
 
-        for domain, dns_info, ssl_info, waf_enabled in collected:
+        for domain, dns_info, ssl_info, waf_enabled, waf_method in collected:
             gost_val = "Да" if ssl_info.get("gost") else "Нет"
             waf_val = "Да" if waf_enabled else "Нет"
             
@@ -864,8 +873,8 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
 
     else:
         # Для каждого домена создаем отдельное сообщение с кнопками
-        for domain, dns_info, ssl_info, waf_enabled in collected:
-            report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+        for domain, dns_info, ssl_info, waf_enabled, waf_method in collected:
+            report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
             
             # Создаем клавиатуру с кнопками для этого домена
             has_waf_perm = has_permission(user_id, "check_domains")  # WAF проверка доступна если есть доступ к проверке доменов
@@ -1234,7 +1243,7 @@ async def _recheck_domain(
         await message.edit_text("⏳ Перепроверяю домен...", parse_mode=ParseMode.HTML)
         
         # Получаем данные
-        dns_info, ssl_info, waf_enabled = await asyncio.gather(
+        dns_info, ssl_info, waf_result = await asyncio.gather(
             fetch_dns(domain, settings.DNS_TIMEOUT),
             fetch_ssl(domain),
             test_waf(domain, user_id=user_id),
@@ -1248,9 +1257,17 @@ async def _recheck_domain(
         if isinstance(ssl_info, Exception):
             logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
             ssl_info = {}
-        if isinstance(waf_enabled, Exception):
-            logger.error(f"Ошибка WAF для {domain}: {waf_enabled}")
+        
+        # Обрабатываем результат WAF
+        if isinstance(waf_result, Exception):
+            logger.error(f"Ошибка WAF для {domain}: {waf_result}")
             waf_enabled = False
+            waf_method = None
+        elif isinstance(waf_result, tuple) and len(waf_result) == 2:
+            waf_enabled, waf_method = waf_result
+        else:
+            waf_enabled = bool(waf_result)
+            waf_method = None
         
         # Формируем отчет
         report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
@@ -1269,7 +1286,7 @@ async def _recheck_domain(
         # Сохраняем в историю
         if settings.HISTORY_ENABLED:
             try:
-                add_check_result(domain, user_id, dns_info, ssl_info, waf_enabled)
+                add_check_result(domain, user_id, dns_info, ssl_info, waf_enabled, waf_method)
             except Exception as e:
                 logger.warning(f"Ошибка при сохранении в историю: {e}")
         
@@ -1307,7 +1324,12 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("quick_waf_"))
 async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
-    """Быстрая проверка WAF для домена."""
+    """
+    Быстрая проверка WAF для домена через отправку тестовой инъекции.
+    
+    Использует специальную проверку с инъекциями для гарантированного получения 403,
+    если WAF присутствует.
+    """
     user_id = callback.from_user.id
     
     if not has_access(user_id):
@@ -1321,17 +1343,25 @@ async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
     # Извлекаем домен
     domain = callback.data.replace("quick_waf_", "")
     
-    await callback.answer("🛡️ Проверяю WAF...")
+    await callback.answer("🛡️ Проверяю WAF через инъекцию...")
     
     try:
         # Обновляем сообщение
         await callback.message.edit_text(
-            f"🛡️ Проверяю WAF для {domain}...",
+            f"🛡️ Проверяю WAF для {domain}...\n\n"
+            f"Отправляю тестовые запросы с инъекциями для проверки защиты.",
             parse_mode=ParseMode.HTML
         )
         
-        # Проверяем WAF
-        waf_enabled = await test_waf(domain, user_id=user_id)
+        # Используем специальную проверку с инъекциями
+        waf_result = await test_waf_injection(domain)
+        
+        # Обрабатываем результат (кортеж (bool, str))
+        if isinstance(waf_result, tuple) and len(waf_result) == 2:
+            waf_enabled, waf_method = waf_result
+        else:
+            waf_enabled = bool(waf_result)
+            waf_method = "injection"
         
         # Получаем текущие данные для обновления отчета
         dns_info = await fetch_dns(domain, settings.DNS_TIMEOUT)
@@ -1340,7 +1370,7 @@ async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
         # Формируем отчет
         mode = (await state.get_data()).get("view_mode", DEFAULT_MODE)
         brief = mode == "brief"
-        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
         
         # Обновляем клавиатуру
         has_waf_perm = has_permission(user_id, "check_domains")
@@ -1352,7 +1382,13 @@ async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
             reply_markup=keyboard,
         )
         
-        await callback.answer(f"WAF: {'✅ Включен' if waf_enabled else '❌ Не обнаружен'}")
+        # Формируем детальное сообщение о результате
+        if waf_enabled:
+            result_msg = "✅ WAF обнаружен (получен блокирующий статус при инъекции)"
+        else:
+            result_msg = "❌ WAF не обнаружен (инъекции не заблокированы)"
+        
+        await callback.answer(result_msg, show_alert=True)
         
     except Exception as e:
         logger.error(f"Ошибка при проверке WAF для {domain}: {e}", exc_info=True)
@@ -1387,12 +1423,19 @@ async def quick_certs_check(callback: types.CallbackQuery, state: FSMContext):
         # Получаем данные о сертификатах
         ssl_info = await fetch_ssl(domain)
         dns_info = await fetch_dns(domain, settings.DNS_TIMEOUT)
-        waf_enabled = await test_waf(domain, user_id=user_id)
+        waf_result = await test_waf(domain, user_id=user_id)
+        
+        # Обрабатываем результат WAF
+        if isinstance(waf_result, tuple) and len(waf_result) == 2:
+            waf_enabled, waf_method = waf_result
+        else:
+            waf_enabled = bool(waf_result)
+            waf_method = None
         
         # Формируем отчет
         mode = (await state.get_data()).get("view_mode", DEFAULT_MODE)
         brief = mode == "brief"
-        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
         
         # Обновляем клавиатуру
         has_waf_perm = has_permission(user_id, "check_domains")

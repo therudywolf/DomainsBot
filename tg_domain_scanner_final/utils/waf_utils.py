@@ -87,8 +87,9 @@ async def _test_waf_policy(domain: str, timeout: int = 6) -> bool:
 
 
 @ttl_cache()
-async def test_waf(domain: str, timeout: Optional[int] = None, user_id: Optional[int] = None) -> bool:
-    """Проверяет наличие WAF на домене.
+async def test_waf(domain: str, timeout: Optional[int] = None, user_id: Optional[int] = None) -> tuple[bool, str]:
+    """
+    Проверяет наличие WAF на домене.
     
     Использует режим проверки из настроек пользователя или по умолчанию policy-based.
     
@@ -98,7 +99,9 @@ async def test_waf(domain: str, timeout: Optional[int] = None, user_id: Optional
         user_id: ID пользователя для получения настроек режима проверки
         
     Returns:
-        True если WAF обнаружен, False если нет
+        Кортеж (результат, метод_проверки):
+        - результат: True если WAF обнаружен, False если нет
+        - метод_проверки: "policy" (check policy), "light" (легкая проверка) или "unknown"
     """
     # Определяем режим проверки
     if user_id is not None:
@@ -106,15 +109,19 @@ async def test_waf(domain: str, timeout: Optional[int] = None, user_id: Optional
         user_timeout = get_waf_timeout(user_id)
         if user_timeout is not None:
             timeout = user_timeout
+        logger.info(f"WAF проверка для {domain}: режим={waf_mode}, user_id={user_id}, timeout={timeout}")
     else:
         waf_mode = "policy"
+        logger.debug(f"WAF проверка для {domain}: режим={waf_mode} (по умолчанию, user_id не указан)")
     
     timeout = timeout or settings.HTTP_TIMEOUT
     
     # Выбираем метод проверки
     if waf_mode == "light":
-        logger.debug(f"Используется легкая проверка WAF для {domain}")
-        return await test_waf_light(domain, timeout)
+        logger.debug(f"Используется легкая проверка WAF для {domain} (user_id={user_id})")
+        result = await test_waf_light(domain, timeout)
+        return (result, "light")
     else:
-        logger.debug(f"Используется policy-based проверка WAF для {domain}")
-        return await _test_waf_policy(domain, timeout)
+        logger.debug(f"Используется policy-based проверка WAF для {domain} (user_id={user_id})")
+        result = await _test_waf_policy(domain, timeout)
+        return (result, "policy")

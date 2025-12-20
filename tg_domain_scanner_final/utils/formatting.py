@@ -136,6 +136,7 @@ def build_report(
     *,
     brief: bool = False,
     max_san: int = 5,
+    waf_method: Optional[str] = None,
 ) -> str:
     """
     Формирует красивый и структурированный отчет о сканировании домена.
@@ -293,6 +294,17 @@ def build_report(
     
     # WAF
     waf_status = "✅ Включен" if waf else "❌ Не обнаружен"
+    
+    # Добавляем информацию о методе проверки
+    if waf_method:
+        method_names = {
+            "policy": "check policy",
+            "light": "легкая проверка",
+            "injection": "скрипт (инъекции)",
+        }
+        method_name = method_names.get(waf_method, waf_method)
+        waf_status += f" <i>(проверено: {method_name})</i>"
+    
     lines.append(f"   <b>WAF:</b> {waf_status}")
     
     # GOST

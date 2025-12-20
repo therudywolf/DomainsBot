@@ -56,6 +56,7 @@ def add_check_result(
     dns_info: Dict[str, Any],
     ssl_info: Dict[str, Any],
     waf_enabled: bool,
+    waf_method: Optional[str] = None,
 ) -> None:
     """
     Добавляет результат проверки в историю.
@@ -66,6 +67,7 @@ def add_check_result(
         dns_info: DNS информация
         ssl_info: SSL информация
         waf_enabled: Наличие WAF
+        waf_method: Метод проверки WAF (policy, light, injection)
     """
     entry = {
         "timestamp": datetime.now().isoformat(),
@@ -79,6 +81,7 @@ def add_check_result(
             "gost_not_after": ssl_info.get("GostNotAfter").isoformat() if ssl_info.get("GostNotAfter") else None,
         },
         "waf": waf_enabled,
+        "waf_method": waf_method,
     }
     
     with _history_lock:
