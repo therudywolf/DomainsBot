@@ -95,7 +95,7 @@ async def check_single_domain(
                 dns_info = {}
             
             # Обрабатываем результат WAF (может быть кортеж или исключение)
-            if isinstance(waf_result, Exception):
+            if isinstance(waf_result, BaseException):
                 logger.error(f"Ошибка WAF для {domain}: {waf_result}")
                 waf_enabled = False
                 waf_method = None

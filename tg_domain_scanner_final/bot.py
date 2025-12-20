@@ -797,6 +797,9 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         f"chat_id={message.chat.id}"
     )
     
+    # Логируем начало обработки для отладки
+    processing_start = asyncio.get_event_loop().time()
+    
     # Проверка доступа
     if not await check_access(message):
         logger.warning(f"❌ Доступ запрещен для user_id={user_id} при обработке доменов")
@@ -878,48 +881,139 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
 
     logger.debug(f"Ожидание завершения {total} задач проверки доменов")
     
-    for coro in asyncio.as_completed(tasks):
+    # Максимальное время на проверку одного домена (включая все попытки)
+    MAX_DOMAIN_CHECK_TIMEOUT = 120  # 2 минуты на домен
+    
+    # Обертываем каждую задачу в таймаут
+    async def check_with_timeout(task: asyncio.Task, domain: str) -> Tuple[str, Tuple[str, dict, dict, bool, Optional[str]]]:
+        """Обертка для задачи с таймаутом."""
         try:
-            line, row = await coro
-            reports.append(line)
-            collected.append(row)
-            done += 1
-        except Exception as e:
+            return await asyncio.wait_for(task, timeout=MAX_DOMAIN_CHECK_TIMEOUT)
+        except asyncio.TimeoutError:
             logger.error(
-                f"❌ Ошибка при проверке домена | "
+                f"⏱️ Таймаут при проверке домена {domain} | "
+                f"user_id={user_id} | "
+                f"timeout={MAX_DOMAIN_CHECK_TIMEOUT}s"
+            )
+            # Отменяем задачу при таймауте
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            # Возвращаем частичный результат при таймауте
+            error_msg = f"⏱️ Таймаут проверки (> {MAX_DOMAIN_CHECK_TIMEOUT}s)"
+            row = (domain, {}, {}, False, None)
+            return error_msg, row
+        except BaseException as e:
+            logger.error(
+                f"❌ Критическая ошибка при проверке домена {domain} | "
                 f"user_id={user_id} | "
                 f"error={type(e).__name__}: {str(e)}",
                 exc_info=True
             )
-            done += 1
-
-        now = loop.time()
-        need_update = total >= 4 and (done == total or now - last_edit >= MIN_EDIT_INTERVAL)
-
-        if need_update:
-            elapsed = now - start_ts
-            eta_sec = int(elapsed / done * (total - done)) if done < total else 0
-            eta_txt = f"{eta_sec // 60}м {eta_sec % 60}с" if eta_sec else "0 с"
-            text = f"⏳ {done} / {total} • осталось ≈ {eta_txt}"
-
+            # Отменяем задачу при ошибке
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            error_msg = f"❌ Ошибка: {type(e).__name__}"
+            row = (domain, {}, {}, False, None)
+            return error_msg, row
+    
+    # Создаем обернутые задачи
+    wrapped_tasks = [
+        asyncio.create_task(check_with_timeout(task, domain))
+        for task, domain in zip(tasks, domains)
+    ]
+    
+    # Общий таймаут для всей обработки (максимум 10 минут на все домены)
+    MAX_TOTAL_PROCESSING_TIME = 600  # 10 минут
+    
+    try:
+        # Используем as_completed напрямую, но с проверкой общего таймаута
+        for coro in asyncio.as_completed(wrapped_tasks):
+            # Проверяем общий таймаут перед обработкой каждого результата
+            elapsed_total = loop.time() - start_ts
+            if elapsed_total > MAX_TOTAL_PROCESSING_TIME:
+                logger.error(
+                    f"⏱️ Превышен общий таймаут обработки доменов | "
+                    f"user_id={user_id} | "
+                    f"elapsed={elapsed_total:.2f}s | "
+                    f"done={done}/{total}"
+                )
+                # Отменяем все оставшиеся задачи
+                for task in wrapped_tasks:
+                    if not task.done():
+                        task.cancel()
+                break
             try:
-                if progress_msg is None:
-                    progress_msg = await message.reply(text)
+                line, row = await coro
+                reports.append(line)
+                collected.append(row)
+                done += 1
+                logger.debug(f"✅ Домен проверен: {row[0]} ({done}/{total})")
+            except BaseException as e:
+                logger.error(
+                    f"❌ Неожиданная ошибка при обработке результата проверки | "
+                    f"user_id={user_id} | "
+                    f"done={done}/{total} | "
+                    f"error={type(e).__name__}: {str(e)}",
+                    exc_info=True
+                )
+                done += 1
+                # Добавляем пустой результат, чтобы не сломать счетчик
+                row = ("unknown", {}, {}, False, None)
+                collected.append(row)
+
+            now = loop.time()
+            need_update = total >= 4 and (done == total or now - last_edit >= MIN_EDIT_INTERVAL)
+
+            if need_update:
+                elapsed = now - start_ts
+                # Защита от деления на ноль
+                if done > 0 and done < total:
+                    eta_sec = int(elapsed / done * (total - done))
+                    eta_txt = f"{eta_sec // 60}м {eta_sec % 60}с" if eta_sec > 0 else "0 с"
                 else:
-                    await progress_msg.edit_text(text)
-                last_edit = now
-            except Exception:
-                progress_msg = None
+                    eta_txt = "0 с"
+                text = f"⏳ {done} / {total} • осталось ≈ {eta_txt}"
+
+                try:
+                    if progress_msg is None:
+                        progress_msg = await message.reply(text)
+                        logger.debug(f"Создано сообщение прогресса для user_id={user_id}")
+                    else:
+                        await progress_msg.edit_text(text)
+                        logger.debug(f"Обновлено сообщение прогресса: {done}/{total} для user_id={user_id}")
+                    last_edit = now
+                except Exception as e:
+                    logger.warning(f"Ошибка при обновлении прогресса: {e}")
+                    progress_msg = None
+    finally:
+        # Отменяем все незавершенные задачи
+        for task in wrapped_tasks:
+            if not task.done():
+                task.cancel()
+        # Ждем отмены всех задач
+        if wrapped_tasks:
+            await asyncio.gather(*wrapped_tasks, return_exceptions=True)
+        logger.debug(f"Все задачи завершены или отменены для user_id={user_id}")
 
     if bad:
         reports.append("🔸 Игнорированы некорректные строки: " + ", ".join(bad))
 
     total_duration = asyncio.get_event_loop().time() - start_time
+    processing_duration = asyncio.get_event_loop().time() - processing_start
     logger.info(
         f"✅ Все домены проверены | "
         f"user_id={user_id} | "
         f"total={total} | "
         f"duration={total_duration:.2f}s | "
+        f"processing_duration={processing_duration:.2f}s | "
         f"avg_per_domain={total_duration/total:.2f}s"
     )
 
