@@ -77,12 +77,16 @@ async def check_single_domain(
             
             # Обрабатываем исключения (включая CancelledError, который является BaseException)
             if isinstance(dns_info, BaseException):
-                logger.error(f"Ошибка DNS для {domain}: {dns_info}")
+                error_type = type(dns_info).__name__
+                error_msg = str(dns_info) if str(dns_info) else f"{error_type} (без сообщения)"
+                logger.error(f"Ошибка DNS для {domain}: {error_type}: {error_msg}")
                 dns_info = {}
                 record_error("DNS_ERROR")
             
             if isinstance(ssl_info, BaseException):
-                logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
+                error_type = type(ssl_info).__name__
+                error_msg = str(ssl_info) if str(ssl_info) else f"{error_type} (без сообщения)"
+                logger.error(f"Ошибка SSL для {domain}: {error_type}: {error_msg}")
                 ssl_info = {}
                 record_error("SSL_ERROR")
             
