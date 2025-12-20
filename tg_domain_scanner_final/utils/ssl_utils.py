@@ -85,7 +85,8 @@ def _get_gost_connector() -> aiohttp.TCPConnector:
     global _gost_connector
     try:
         # Проверяем, что connector существует и не закрыт
-        if _gost_connector is None or _gost_connector.closed or _gost_connector.is_closed:
+        # У TCPConnector есть только атрибут `closed`, не `is_closed`
+        if _gost_connector is None or _gost_connector.closed:
             _gost_connector = None  # Сбрасываем перед созданием нового
             _gost_connector = aiohttp.TCPConnector(
                 limit=20,
@@ -146,7 +147,7 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
         try:
             # Проверяем состояние connector перед использованием
             connector = _get_gost_connector()
-            if connector.closed or connector.is_closed:
+            if connector.closed:
                 logger.warning(f"Connector закрыт, пересоздаем для {domain}")
                 connector = _get_gost_connector()
             

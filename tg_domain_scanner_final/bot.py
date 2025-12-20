@@ -935,6 +935,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     
     try:
         # Используем as_completed напрямую, но с проверкой общего таймаута
+        completed_count = 0
         for coro in asyncio.as_completed(wrapped_tasks):
             # Проверяем общий таймаут перед обработкой каждого результата
             elapsed_total = loop.time() - start_ts
@@ -950,11 +951,13 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                     if not task.done():
                         task.cancel()
                 break
+            
             try:
                 line, row = await coro
                 reports.append(line)
                 collected.append(row)
                 done += 1
+                completed_count += 1
                 logger.debug(f"✅ Домен проверен: {row[0]} ({done}/{total})")
             except BaseException as e:
                 logger.error(
@@ -965,6 +968,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                     exc_info=True
                 )
                 done += 1
+                completed_count += 1
                 # Добавляем пустой результат, чтобы не сломать счетчик
                 row = ("unknown", {}, {}, False, None)
                 collected.append(row)
@@ -993,14 +997,28 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                 except Exception as e:
                     logger.warning(f"Ошибка при обновлении прогресса: {e}")
                     progress_msg = None
+            
+            # Если все задачи завершены, выходим из цикла
+            if completed_count >= total:
+                logger.debug(f"Все {total} задач завершены, выходим из цикла")
+                break
+        
+        logger.debug(f"Цикл as_completed завершен: completed={completed_count}, done={done}, total={total}")
     finally:
-        # Отменяем все незавершенные задачи
-        for task in wrapped_tasks:
-            if not task.done():
+        # Отменяем все незавершенные задачи с таймаутом
+        remaining_tasks = [t for t in wrapped_tasks if not t.done()]
+        if remaining_tasks:
+            logger.warning(f"Отменяем {len(remaining_tasks)} незавершенных задач для user_id={user_id}")
+            for task in remaining_tasks:
                 task.cancel()
-        # Ждем отмены всех задач
-        if wrapped_tasks:
-            await asyncio.gather(*wrapped_tasks, return_exceptions=True)
+            # Ждем отмены с таймаутом, чтобы не блокировать event loop
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*remaining_tasks, return_exceptions=True),
+                    timeout=2.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Таймаут при ожидании отмены задач для user_id={user_id}")
         logger.debug(f"Все задачи завершены или отменены для user_id={user_id}")
 
     if bad:
