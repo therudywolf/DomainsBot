@@ -56,7 +56,7 @@ from config import settings
 from utils.dns_utils import fetch_dns
 from utils.ssl_utils import fetch_ssl
 from utils.waf_utils import test_waf
-from utils.formatting import build_report
+from utils.formatting import build_report, build_report_keyboard
 from utils.telegram_utils import safe_send_text
 
 # Импорт утилит для настроек пользователя
@@ -863,12 +863,20 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         )
 
     else:
-        await safe_send_text(
-            message.bot,
-            message.chat.id,
-            "\n".join(reports),
-            reply_markup=build_mode_keyboard(view_mode),
-        )
+        # Для каждого домена создаем отдельное сообщение с кнопками
+        for domain, dns_info, ssl_info, waf_enabled in collected:
+            report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+            
+            # Создаем клавиатуру с кнопками для этого домена
+            has_waf_perm = has_permission(user_id, "check_domains")  # WAF проверка доступна если есть доступ к проверке доменов
+            keyboard = build_report_keyboard(domain, view_mode, user_id, has_waf_perm)
+            
+            await message.bot.send_message(
+                message.chat.id,
+                report_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
 
 
 # ---------- Команды ----------
@@ -1144,10 +1152,27 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
         f"Режим установлен: {'Расширенный' if new_mode == 'full' else 'Короткий'}"
     )
 
+    # Пытаемся найти домен в сообщении и перепроверить
     try:
-        await callback.message.edit_reply_markup(reply_markup=build_mode_keyboard(new_mode))
-    except Exception:
-        pass
+        message_text = callback.message.text or callback.message.caption or ""
+        
+        # Ищем домен в сообщении (первая строка обычно содержит домен)
+        import re
+        domain_match = re.search(r'🌐 <b>([^<]+)</b>', message_text)
+        
+        if domain_match:
+            domain = domain_match.group(1)
+            # Перепроверяем домен с новым режимом
+            await _recheck_domain(callback.message, state, domain, new_mode)
+        else:
+            # Просто обновляем клавиатуру
+            await callback.message.edit_reply_markup(reply_markup=build_mode_keyboard(new_mode))
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении режима: {e}")
+        try:
+            await callback.message.edit_reply_markup(reply_markup=build_mode_keyboard(new_mode))
+        except Exception:
+            pass
 
 
 # ---------- Переключение режима WAF ----------
@@ -1178,6 +1203,226 @@ async def switch_waf_mode(callback: types.CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=build_waf_mode_keyboard(new_mode))
     except Exception:
         pass
+
+
+# ---------- Быстрые действия из отчета ----------
+
+async def _recheck_domain(
+    message: types.Message,
+    state: FSMContext,
+    domain: str,
+    mode: Optional[str] = None
+) -> None:
+    """
+    Перепроверяет один домен и обновляет отчет.
+    
+    Args:
+        message: Сообщение для обновления
+        state: Состояние FSM
+        domain: Домен для перепроверки
+        mode: Режим отчета (если None, берется из state)
+    """
+    user_id = message.from_user.id
+    
+    if mode is None:
+        mode = (await state.get_data()).get("view_mode", DEFAULT_MODE)
+    
+    brief = mode == "brief"
+    
+    try:
+        # Обновляем сообщение
+        await message.edit_text("⏳ Перепроверяю домен...", parse_mode=ParseMode.HTML)
+        
+        # Получаем данные
+        dns_info, ssl_info, waf_enabled = await asyncio.gather(
+            fetch_dns(domain, settings.DNS_TIMEOUT),
+            fetch_ssl(domain),
+            test_waf(domain, user_id=user_id),
+            return_exceptions=True
+        )
+        
+        # Обрабатываем исключения
+        if isinstance(dns_info, Exception):
+            logger.error(f"Ошибка DNS для {domain}: {dns_info}")
+            dns_info = {}
+        if isinstance(ssl_info, Exception):
+            logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
+            ssl_info = {}
+        if isinstance(waf_enabled, Exception):
+            logger.error(f"Ошибка WAF для {domain}: {waf_enabled}")
+            waf_enabled = False
+        
+        # Формируем отчет
+        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+        
+        # Создаем клавиатуру
+        has_waf_perm = has_permission(user_id, "check_domains")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        
+        # Обновляем сообщение
+        await message.edit_text(
+            report_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        
+        # Сохраняем в историю
+        if settings.HISTORY_ENABLED:
+            try:
+                add_check_result(domain, user_id, dns_info, ssl_info, waf_enabled)
+            except Exception as e:
+                logger.warning(f"Ошибка при сохранении в историю: {e}")
+        
+        # Записываем статистику
+        if settings.STATS_ENABLED:
+            record_domain_check(domain, user_id)
+            
+    except Exception as e:
+        logger.error(f"Ошибка при перепроверке домена {domain}: {e}", exc_info=True)
+        await message.edit_text(
+            f"❌ Ошибка при перепроверке домена {domain}:\n{type(e).__name__}",
+            parse_mode=ParseMode.HTML
+        )
+
+
+@router.callback_query(F.data.startswith("recheck_"))
+async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрая перепроверка домена."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    if not has_permission(user_id, "check_domains"):
+        await callback.answer("❌ Нет доступа к проверке доменов", show_alert=True)
+        return
+    
+    # Извлекаем домен из callback_data
+    domain = callback.data.replace("recheck_", "")
+    
+    await callback.answer("🔄 Перепроверяю домен...")
+    await _recheck_domain(callback.message, state, domain)
+
+
+@router.callback_query(F.data.startswith("quick_waf_"))
+async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрая проверка WAF для домена."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    if not has_permission(user_id, "check_domains"):
+        await callback.answer("❌ Нет доступа к проверке доменов", show_alert=True)
+        return
+    
+    # Извлекаем домен
+    domain = callback.data.replace("quick_waf_", "")
+    
+    await callback.answer("🛡️ Проверяю WAF...")
+    
+    try:
+        # Обновляем сообщение
+        await callback.message.edit_text(
+            f"🛡️ Проверяю WAF для {domain}...",
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Проверяем WAF
+        waf_enabled = await test_waf(domain, user_id=user_id)
+        
+        # Получаем текущие данные для обновления отчета
+        dns_info = await fetch_dns(domain, settings.DNS_TIMEOUT)
+        ssl_info = await fetch_ssl(domain)
+        
+        # Формируем отчет
+        mode = (await state.get_data()).get("view_mode", DEFAULT_MODE)
+        brief = mode == "brief"
+        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+        
+        # Обновляем клавиатуру
+        has_waf_perm = has_permission(user_id, "check_domains")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        
+        await callback.message.edit_text(
+            report_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        
+        await callback.answer(f"WAF: {'✅ Включен' if waf_enabled else '❌ Не обнаружен'}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке WAF для {domain}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при проверке WAF", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("quick_certs_"))
+async def quick_certs_check(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрая проверка сертификатов для домена."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    if not has_permission(user_id, "check_domains"):
+        await callback.answer("❌ Нет доступа к проверке доменов", show_alert=True)
+        return
+    
+    # Извлекаем домен
+    domain = callback.data.replace("quick_certs_", "")
+    
+    await callback.answer("📅 Проверяю сертификаты...")
+    
+    try:
+        # Обновляем сообщение
+        await callback.message.edit_text(
+            f"📅 Проверяю сертификаты для {domain}...",
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Получаем данные о сертификатах
+        ssl_info = await fetch_ssl(domain)
+        dns_info = await fetch_dns(domain, settings.DNS_TIMEOUT)
+        waf_enabled = await test_waf(domain, user_id=user_id)
+        
+        # Формируем отчет
+        mode = (await state.get_data()).get("view_mode", DEFAULT_MODE)
+        brief = mode == "brief"
+        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+        
+        # Обновляем клавиатуру
+        has_waf_perm = has_permission(user_id, "check_domains")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        
+        await callback.message.edit_text(
+            report_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        
+        # Формируем информацию о сертификатах
+        cert_info = []
+        
+        if ssl_info.get("NotAfter"):
+            from utils.formatting import _format_date_with_days_left
+            cert_info.append(f"Обычный: {_format_date_with_days_left(ssl_info.get('NotAfter'))}")
+        
+        if ssl_info.get("GostNotAfter"):
+            from utils.formatting import _format_date_with_days_left
+            cert_info.append(f"GOST: {_format_date_with_days_left(ssl_info.get('GostNotAfter'))}")
+        
+        if cert_info:
+            await callback.answer("✅ Сертификаты проверены\n" + "\n".join(cert_info), show_alert=True)
+        else:
+            await callback.answer("✅ Сертификаты проверены")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке сертификатов для {domain}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при проверке сертификатов", show_alert=True)
 
 
 # ---------- МОНИТОРИНГ ДОМЕНОВ ----------
@@ -1716,6 +1961,7 @@ async def process_remove_access(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "admin_list_access")
 async def admin_list_access(callback: types.CallbackQuery):
+    """Показывает список всех пользователей с их разрешениями."""
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("❌ Только администратор", show_alert=True)
         return
@@ -1727,19 +1973,29 @@ async def admin_list_access(callback: types.CallbackQuery):
         await callback.answer()
         return
     
-    # Форматируем список
-    lines = ["📋 *Список доступов:*\n"]
+    # Форматируем список с разрешениями
+    lines = ["📋 *Список пользователей и их разрешения:*\n"]
+    
     for user_id, data in sorted(db.items()):
         username = data.get("username", "")
         added_at = data.get("added_at", "")
+        permissions = data.get("permissions", DEFAULT_PERMISSIONS.copy())
         
-        user_info = f"ID: {user_id}"
+        user_info = f"*ID: {user_id}*"
         if username:
             user_info += f" (@{username})"
         if added_at:
-            user_info += f" - добавлен {added_at[:10]}"
+            user_info += f"\nДобавлен: {added_at[:10]}"
         
-        lines.append(f"• {user_info}")
+        lines.append(user_info)
+        lines.append("Разрешения:")
+        
+        # Показываем разрешения
+        for perm_key, perm_name in PERMISSIONS.items():
+            status = "✅" if permissions.get(perm_key, False) else "❌"
+            lines.append(f"  {status} {perm_name}")
+        
+        lines.append("")  # Пустая строка между пользователями
     
     text = "\n".join(lines)
     
@@ -1752,6 +2008,204 @@ async def admin_list_access(callback: types.CallbackQuery):
     else:
         await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
     
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_manage_permissions")
+async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMContext):
+    """Начинает процесс управления разрешениями пользователя."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.manage_permissions_user_waiting)
+    
+    db = get_access_list()
+    if not db:
+        await callback.message.answer("❌ Нет пользователей в базе. Сначала добавьте пользователя.")
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # Формируем список пользователей
+    users_list = "👥 *Выберите пользователя для управления разрешениями:*\n\n"
+    for user_id, data in sorted(db.items()):
+        username = data.get("username", "")
+        user_display = f"ID: {user_id}"
+        if username:
+            user_display += f" (@{username})"
+        users_list += f"• {user_display}\n"
+    
+    users_list += "\nВведите TG ID пользователя:"
+    
+    await callback.message.answer(users_list, parse_mode=ParseMode.MARKDOWN)
+    await callback.answer()
+
+
+@router.message(AdminStates.manage_permissions_user_waiting)
+async def process_manage_permissions_user(message: types.Message, state: FSMContext):
+    """Обрабатывает выбор пользователя для управления разрешениями."""
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    text = message.text or ""
+    try:
+        user_id = int(text.strip())
+    except ValueError:
+        await message.answer("❌ Некорректный ID. Введите числовой TG ID.")
+        return
+    
+    # Проверяем, что пользователь существует
+    db = get_access_list()
+    if str(user_id) not in db:
+        await message.answer(f"❌ Пользователь {user_id} не найден в базе.")
+        await state.clear()
+        return
+    
+    # Сохраняем выбранного пользователя в состоянии
+    await state.update_data(selected_user_id=user_id)
+    
+    # Получаем текущие разрешения
+    permissions = get_user_permissions(user_id)
+    user_data = db[str(user_id)]
+    username = user_data.get("username", "")
+    
+    # Формируем клавиатуру с разрешениями
+    keyboard_buttons = []
+    for perm_key, perm_name in PERMISSIONS.items():
+        current_status = permissions.get(perm_key, False)
+        status_icon = "✅" if current_status else "❌"
+        keyboard_buttons.append([
+            types.InlineKeyboardButton(
+                text=f"{status_icon} {perm_name}",
+                callback_data=f"perm_toggle_{user_id}_{perm_key}",
+            )
+        ])
+    
+    keyboard_buttons.append([
+        types.InlineKeyboardButton(
+            text="🔙 Назад",
+            callback_data="admin_back",
+        )
+    ])
+    
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    user_display = f"ID: {user_id}"
+    if username:
+        user_display += f" (@{username})"
+    
+    text_msg = (
+        f"🔐 *Управление разрешениями*\n\n"
+        f"Пользователь: {user_display}\n\n"
+        f"Нажмите на разрешение для переключения:"
+    )
+    
+    await message.answer(text_msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("perm_toggle_"))
+async def toggle_permission(callback: types.CallbackQuery):
+    """Переключает разрешение пользователя."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    # Парсим данные: perm_toggle_{user_id}_{permission}
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer("❌ Ошибка формата", show_alert=True)
+        return
+    
+    try:
+        user_id = int(parts[2])
+        permission = parts[3]
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка парсинга", show_alert=True)
+        return
+    
+    if permission not in PERMISSIONS:
+        await callback.answer("❌ Неизвестное разрешение", show_alert=True)
+        return
+    
+    # Получаем текущее значение и переключаем
+    current_value = has_permission(user_id, permission)
+    new_value = not current_value
+    
+    if set_user_permission(user_id, permission, new_value):
+        status = "выдано" if new_value else "отозвано"
+        perm_name = PERMISSIONS[permission]
+        await callback.answer(f"✅ Разрешение '{perm_name}' {status}", show_alert=False)
+        
+        # Обновляем клавиатуру
+        permissions = get_user_permissions(user_id)
+        keyboard_buttons = []
+        for perm_key, perm_name in PERMISSIONS.items():
+            current_status = permissions.get(perm_key, False)
+            status_icon = "✅" if current_status else "❌"
+            keyboard_buttons.append([
+                types.InlineKeyboardButton(
+                    text=f"{status_icon} {perm_name}",
+                    callback_data=f"perm_toggle_{user_id}_{perm_key}",
+                )
+            ])
+        
+        keyboard_buttons.append([
+            types.InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data="admin_back",
+            )
+        ])
+        
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        try:
+            await callback.message.edit_reply_markup(reply_markup=keyboard)
+        except Exception:
+            pass
+    else:
+        await callback.answer("❌ Ошибка при изменении разрешения", show_alert=True)
+
+
+@router.callback_query(F.data == "admin_back")
+async def admin_back(callback: types.CallbackQuery):
+    """Возврат в админ-панель."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    help_text = (
+        "👨‍💼 *Админ-панель*\n\n"
+        "Используйте кнопки ниже для управления:"
+    )
+    
+    await callback.message.edit_text(
+        help_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=build_admin_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_stats")
+async def admin_stats_callback(callback: types.CallbackQuery):
+    """Показывает статистику через админ-панель."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    # Используем существующую команду stats
+    from aiogram.types import Message
+    fake_message = Message(
+        message_id=callback.message.message_id,
+        date=callback.message.date,
+        chat=callback.message.chat,
+        from_user=callback.from_user,
+        content_type="text",
+        text="/stats",
+    )
+    await cmd_stats(fake_message)
     await callback.answer()
 
 
