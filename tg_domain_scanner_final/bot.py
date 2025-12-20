@@ -987,10 +987,14 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                 text = f"⏳ {done} / {total} • осталось ≈ {eta_txt}"
 
                 try:
+                    # Используем safe_send_text для rate limiting при создании сообщения прогресса
                     if progress_msg is None:
+                        from utils.telegram_utils import safe_send_text
                         progress_msg = await message.reply(text)
                         logger.debug(f"Создано сообщение прогресса для user_id={user_id}")
                     else:
+                        # Добавляем задержку перед обновлением, чтобы не спамить Telegram API
+                        await asyncio.sleep(0.2)  # 200ms задержка перед edit_text
                         await progress_msg.edit_text(text)
                         logger.debug(f"Обновлено сообщение прогресса: {done}/{total} для user_id={user_id}")
                     last_edit = now
@@ -1040,7 +1044,11 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         logger.debug(f"Отправка CSV отчета для {total} доменов")
         # CSV отчет для множественных доменов
         csv_bytes = format_csv_report(collected, brief)
-        await message.answer_document(
+        # Используем safe_send_document для rate limiting
+        from utils.telegram_utils import safe_send_document
+        await safe_send_document(
+            message.bot,
+            message.chat.id,
             types.BufferedInputFile(csv_bytes, filename="report.csv"),
             caption=f"✔️ Проверено {total} доменов.",
         )

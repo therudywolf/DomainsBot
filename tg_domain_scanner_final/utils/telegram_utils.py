@@ -18,7 +18,8 @@ MAX_LEN = 4096
 
 # Rate limiting для Telegram API
 # Telegram позволяет ~30 сообщений в секунду, но для безопасности используем более консервативный лимит
-_MIN_DELAY_BETWEEN_MESSAGES = 0.05  # Минимальная задержка между сообщениями (50ms = 20 сообщений/сек)
+# Используем 0.2 секунды между сообщениями (5 сообщений/сек) для избежания банов
+_MIN_DELAY_BETWEEN_MESSAGES = 0.2  # Минимальная задержка между сообщениями (200ms = 5 сообщений/сек)
 _last_message_time: float = 0
 _message_lock = asyncio.Lock()
 
@@ -82,3 +83,39 @@ async def safe_send_text(
             )
             # Пробуем отправить следующую часть, но логируем ошибку
             raise
+
+
+async def safe_send_document(
+    bot: Bot,
+    chat_id: Union[int, str],
+    document: types.BufferedInputFile,
+    **kwargs
+) -> None:
+    """
+    Безопасно отправляет документ с rate limiting.
+    
+    Args:
+        bot: Экземпляр бота для отправки сообщений
+        chat_id: ID чата или username получателя
+        document: Документ для отправки
+        **kwargs: Дополнительные параметры для answer_document
+    """
+    global _last_message_time
+    
+    # Rate limiting: добавляем задержку перед отправкой документа
+    async with _message_lock:
+        current_time = time.time()
+        time_since_last = current_time - _last_message_time
+        if time_since_last < _MIN_DELAY_BETWEEN_MESSAGES:
+            delay = _MIN_DELAY_BETWEEN_MESSAGES - time_since_last
+            await asyncio.sleep(delay)
+        _last_message_time = time.time()
+    
+    try:
+        await bot.send_document(chat_id, document, **kwargs)
+    except Exception as e:
+        logger.error(
+            f"Ошибка при отправке документа в чат {chat_id}: {e}",
+            exc_info=True
+        )
+        raise

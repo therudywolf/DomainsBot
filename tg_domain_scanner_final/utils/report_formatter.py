@@ -4,6 +4,7 @@
 Содержит функции для создания CSV отчетов и отправки отчетов пользователям.
 """
 
+import asyncio
 import csv
 import io
 from typing import List, Tuple, Dict, Any, Optional
@@ -114,7 +115,7 @@ async def send_domain_reports(
         brief: Использовать краткий режим отчета
     """
     # Для каждого домена создаем отдельное сообщение с кнопками
-    for domain, dns_info, ssl_info, waf_enabled, waf_method in collected:
+    for idx, (domain, dns_info, ssl_info, waf_enabled, waf_method) in enumerate(collected, 1):
         report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
         
         # Создаем клавиатуру с кнопками для этого домена
@@ -128,4 +129,9 @@ async def send_domain_reports(
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
+        
+        # Добавляем задержку между отправкой отчетов для разных доменов
+        # (safe_send_text уже имеет внутреннюю задержку, но дополнительная не помешает)
+        if idx < len(collected):
+            await asyncio.sleep(0.3)  # 300ms задержка между отчетами
 
