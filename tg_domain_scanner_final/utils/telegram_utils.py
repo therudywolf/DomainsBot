@@ -19,10 +19,25 @@ MAX_LEN = 4096
 
 # Rate limiting для Telegram API
 # Telegram позволяет ~30 сообщений в секунду, но для безопасности используем более консервативный лимит
-# Используем 0.2 секунды между сообщениями (5 сообщений/сек) для избежания банов
-_MIN_DELAY_BETWEEN_MESSAGES = 0.2  # Минимальная задержка между сообщениями (200ms = 5 сообщений/сек)
+# Используем 1 секунду между сообщениями для полной защиты от банов
+_MIN_DELAY_BETWEEN_MESSAGES = 1.0  # Минимальная задержка между сообщениями (1 сек = 1 сообщение/сек)
 _last_message_time: float = 0
 _message_lock = asyncio.Lock()
+
+
+async def wait_for_rate_limit() -> None:
+    """
+    Ожидает, если необходимо, перед выполнением операции с Telegram API.
+    Используется для всех операций: send_message, edit_text, send_document и т.д.
+    """
+    global _last_message_time
+    async with _message_lock:
+        current_time = time.time()
+        time_since_last = current_time - _last_message_time
+        if time_since_last < _MIN_DELAY_BETWEEN_MESSAGES:
+            delay = _MIN_DELAY_BETWEEN_MESSAGES - time_since_last
+            await asyncio.sleep(delay)
+        _last_message_time = time.time()
 
 
 async def safe_send_text(
@@ -61,19 +76,11 @@ async def safe_send_text(
         text = str(text)
     
     # Разбиваем текст на части и отправляем с rate limiting
-    global _last_message_time
-    
     for offset in range(0, len(text), MAX_LEN):
         chunk = text[offset : offset + MAX_LEN]
         
         # Rate limiting: добавляем задержку между сообщениями
-        async with _message_lock:
-            current_time = time.time()
-            time_since_last = current_time - _last_message_time
-            if time_since_last < _MIN_DELAY_BETWEEN_MESSAGES:
-                delay = _MIN_DELAY_BETWEEN_MESSAGES - time_since_last
-                await asyncio.sleep(delay)
-            _last_message_time = time.time()
+        await wait_for_rate_limit()
         
         try:
             await bot.send_message(chat_id, chunk, **kwargs)
@@ -101,16 +108,8 @@ async def safe_send_document(
         document: Документ для отправки
         **kwargs: Дополнительные параметры для answer_document
     """
-    global _last_message_time
-    
     # Rate limiting: добавляем задержку перед отправкой документа
-    async with _message_lock:
-        current_time = time.time()
-        time_since_last = current_time - _last_message_time
-        if time_since_last < _MIN_DELAY_BETWEEN_MESSAGES:
-            delay = _MIN_DELAY_BETWEEN_MESSAGES - time_since_last
-            await asyncio.sleep(delay)
-        _last_message_time = time.time()
+    await wait_for_rate_limit()
     
     try:
         await bot.send_document(chat_id, document, **kwargs)

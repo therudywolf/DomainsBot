@@ -683,6 +683,14 @@ class LoggingMiddleware:
             logger.debug(f"📥 Событие {event_type} получено")
         
         try:
+            # Добавляем задержку при обработке множественных входящих сообщений
+            # для предотвращения бана от Telegram при массовой обработке
+            if isinstance(event, types.Message):
+                # Задержка перед обработкой сообщения для распределения нагрузки
+                # Используем rate limiting из telegram_utils для единообразия
+                from utils.telegram_utils import wait_for_rate_limit
+                await wait_for_rate_limit()
+            
             # Выполняем обработчик
             result = await handler(event, data)
             
@@ -871,7 +879,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     ]
 
     # ---------- Прогресс-индикатор ----------
-    MIN_EDIT_INTERVAL = 4  # секунд между edit_text
+    MIN_EDIT_INTERVAL = 10  # секунд между edit_text (увеличено для снижения нагрузки на API)
     total = len(tasks)
     done = 0
     loop = asyncio.get_event_loop()
@@ -987,15 +995,13 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                 text = f"⏳ {done} / {total} • осталось ≈ {eta_txt}"
 
                 try:
-                    # Используем safe_send_text для rate limiting при создании сообщения прогресса
+                    # Используем safe функции для rate limiting
+                    from utils.telegram_utils import safe_reply, safe_edit_text
                     if progress_msg is None:
-                        from utils.telegram_utils import safe_send_text
-                        progress_msg = await message.reply(text)
+                        progress_msg = await safe_reply(message, text)
                         logger.debug(f"Создано сообщение прогресса для user_id={user_id}")
                     else:
-                        # Добавляем задержку перед обновлением, чтобы не спамить Telegram API
-                        await asyncio.sleep(0.2)  # 200ms задержка перед edit_text
-                        await progress_msg.edit_text(text)
+                        await safe_edit_text(progress_msg, text)
                         logger.debug(f"Обновлено сообщение прогресса: {done}/{total} для user_id={user_id}")
                     last_edit = now
                 except Exception as e:
@@ -1664,7 +1670,8 @@ async def _recheck_domain(
     try:
         # Обновляем сообщение
         logger.debug(f"Обновление сообщения для домена {domain}")
-        await message.edit_text("⏳ Перепроверяю домен...", parse_mode=ParseMode.HTML)
+        from utils.telegram_utils import safe_edit_text
+        await safe_edit_text(message, "⏳ Перепроверяю домен...", parse_mode=ParseMode.HTML)
         
         # Получаем данные
         check_start = asyncio.get_event_loop().time()
@@ -1730,7 +1737,9 @@ async def _recheck_domain(
         
         # Обновляем сообщение
         logger.debug(f"Обновление отчета для домена {domain}")
-        await message.edit_text(
+        from utils.telegram_utils import safe_edit_text
+        await safe_edit_text(
+            message,
             report_text,
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
@@ -1772,7 +1781,9 @@ async def _recheck_domain(
             f"error={type(e).__name__}: {str(e)}",
             exc_info=True
         )
-        await message.edit_text(
+        from utils.telegram_utils import safe_edit_text
+        await safe_edit_text(
+            message,
             f"❌ Ошибка при перепроверке домена {domain}:\n{type(e).__name__}",
             parse_mode=ParseMode.HTML
         )
