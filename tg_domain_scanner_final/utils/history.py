@@ -84,44 +84,24 @@ def add_check_result(
         "waf_method": waf_method,
     }
     
-    # Используем буферизованную запись для оптимизации
-    from utils.buffered_writer import BufferedFileWriter
-    
-    def load_history() -> List[Dict[str, Any]]:
-        """Загружает историю из файла (для buffered_writer)."""
-        return _load_history()
-    
-    def save_history(data: List[Dict[str, Any]]) -> bool:
-        """Сохраняет историю в файл (для buffered_writer)."""
-        try:
-            _save_history(data)
-            return True
-        except Exception as e:
-            logger.error(f"Ошибка при сохранении истории: {e}")
-            return False
-    
-    writer = BufferedFileWriter(
-        HISTORY_FILE,
-        flush_interval=60,
-        max_buffer_size=20,
-        load_func=load_history,
-        save_func=save_history
-    )
-    writer.start_periodic_flush()
-    
-    def add_entry(data: List[Dict[str, Any]]) -> None:
-        """Добавляет запись в историю."""
-        # Убеждаемся, что data - это список
-        if not isinstance(data, list):
-            logger.warning(f"Данные истории не являются списком: {type(data)}, преобразуем")
-            data = []
-        
-        data.append(entry)
-        # Ограничиваем размер истории
-        if len(data) > MAX_HISTORY_ENTRIES:
-            data[:] = data[-MAX_HISTORY_ENTRIES:]
-    
-    writer.add_operation(add_entry)
+    # Используем синхронное сохранение для надежности (как в stats.py)
+    # Буферизованная запись может не сохранять данные вовремя
+    try:
+        with _history_lock:
+            history = _load_history()
+            # Убеждаемся, что history - это список
+            if not isinstance(history, list):
+                logger.warning(f"Данные истории не являются списком: {type(history)}, преобразуем")
+                history = []
+            
+            history.append(entry)
+            # Ограничиваем размер истории
+            if len(history) > MAX_HISTORY_ENTRIES:
+                history = history[-MAX_HISTORY_ENTRIES:]
+            
+            _save_history(history)
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении истории: {e}")
 
 
 def get_domain_history(domain: str, limit: int = 10) -> List[Dict[str, Any]]:

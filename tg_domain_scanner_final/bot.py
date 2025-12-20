@@ -731,8 +731,35 @@ class LoggingMiddleware:
                 exc_info=True
             )
             
-            # Пробрасываем исключение дальше
-            raise
+            # Авто-восстановление: пытаемся отправить сообщение об ошибке пользователю
+            try:
+                if isinstance(event, types.Message):
+                    # Пытаемся отправить сообщение об ошибке
+                    try:
+                        await event.answer(
+                            "❌ Произошла ошибка при обработке запроса. "
+                            "Попробуйте еще раз или обратитесь к администратору."
+                        )
+                    except Exception:
+                        # Если не удалось отправить, игнорируем
+                        pass
+                elif isinstance(event, types.CallbackQuery):
+                    # Пытаемся ответить на callback
+                    try:
+                        await event.answer(
+                            "❌ Произошла ошибка",
+                            show_alert=True
+                        )
+                    except Exception:
+                        # Если не удалось ответить, игнорируем
+                        pass
+            except Exception as recovery_error:
+                # Если авто-восстановление тоже упало, просто логируем
+                logger.error(f"Ошибка при авто-восстановлении: {recovery_error}")
+            
+            # НЕ пробрасываем исключение дальше - это предотвращает падение бота
+            # Вместо этого возвращаем None, чтобы обработка продолжилась
+            return None
 
 
 # Регистрируем middleware
@@ -1304,12 +1331,33 @@ async def cmd_stats(message: types.Message):
     
     text += f"\n🔄 Последний сброс: {stats['last_reset']}"
     
-    await safe_send_text(
-        message.bot,
-        message.chat.id,
-        text,
-        parse_mode=ParseMode.MARKDOWN
-    )
+    try:
+        # Проверяем, что bot не None
+        if message.bot is None:
+            logger.warning("message.bot is None in cmd_stats, используем прямой вызов")
+            await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await safe_send_text(
+                message.bot,
+                message.chat.id,
+                text,
+                parse_mode=ParseMode.MARKDOWN
+            )
+    except Exception as e:
+        logger.error(
+            f"❌ Ошибка при отправке статистики | "
+            f"user_id={user_id} | "
+            f"error={type(e).__name__}: {str(e)}",
+            exc_info=True
+        )
+        # Пытаемся отправить через прямой вызов
+        try:
+            await message.answer(
+                "❌ Ошибка при загрузке статистики. Попробуйте позже.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception:
+            pass  # Игнорируем ошибки при отправке сообщения об ошибке
 
 
 @router.message(Command("export_history"))
@@ -3380,24 +3428,85 @@ async def admin_back(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats_callback(callback: types.CallbackQuery):
     """Показывает статистику через админ-панель."""
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("❌ Только администратор", show_alert=True)
-        return
-    
-    # Используем существующую команду stats
-    from aiogram.types import Message
-    # Создаем fake_message с правильным bot из callback
-    fake_message = Message(
-        message_id=callback.message.message_id,
-        date=callback.message.date,
-        chat=callback.message.chat,
-        from_user=callback.from_user,
-        content_type="text",
-        text="/stats",
-        bot=callback.bot,  # Передаем bot из callback
-    )
-    await cmd_stats(fake_message)
-    await callback.answer()
+    try:
+        if callback.from_user.id != ADMIN_ID:
+            await callback.answer("❌ Только администратор", show_alert=True)
+            return
+        
+        # Получаем bot из callback.message.bot или callback.bot
+        bot = callback.message.bot if callback.message else callback.bot
+        if bot is None:
+            # Если bot все еще None, пытаемся получить из data
+            logger.error("Bot is None in admin_stats_callback, используем прямой вызов")
+            # Используем прямой вызов вместо fake_message
+            await callback.answer("⏳ Загрузка статистики...")
+            stats = get_stats()
+            
+            # Формируем сообщение
+            text = (
+                "📊 *Статистика бота*\n\n"
+                f"⏱️ *Время работы:*\n"
+                f"• Дней: {stats['uptime_days']}\n"
+                f"• Часов: {stats['uptime_hours']}\n"
+                f"• Секунд: {stats['uptime_seconds']}\n\n"
+                f"📈 *Использование:*\n"
+                f"• Проверено доменов: {stats['total_domains_checked']}\n"
+                f"• Уникальных пользователей: {stats['total_users']}\n\n"
+            )
+            
+            # Топ доменов
+            if stats['top_domains']:
+                text += "🔝 *Топ доменов:*\n"
+                for domain, count in list(stats['top_domains'].items())[:5]:
+                    text += f"• {domain}: {count}\n"
+                text += "\n"
+            
+            # Топ команд
+            if stats['top_commands']:
+                text += "⚙️ *Топ команд:*\n"
+                for cmd, count in list(stats['top_commands'].items())[:5]:
+                    text += f"• {cmd}: {count}\n"
+                text += "\n"
+            
+            # Топ ошибок
+            if stats['top_errors']:
+                text += "⚠️ *Топ ошибок:*\n"
+                for error, count in list(stats['top_errors'].items())[:5]:
+                    text += f"• {error}: {count}\n"
+            
+            text += f"\n🔄 Последний сброс: {stats['last_reset']}"
+            
+            # Отправляем напрямую через callback.message
+            if callback.message:
+                await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+            await callback.answer()
+            return
+        
+        # Используем существующую команду stats
+        from aiogram.types import Message
+        # Создаем fake_message с правильным bot
+        fake_message = Message(
+            message_id=callback.message.message_id if callback.message else 0,
+            date=callback.message.date if callback.message else datetime.now(),
+            chat=callback.message.chat if callback.message else callback.from_user,
+            from_user=callback.from_user,
+            content_type="text",
+            text="/stats",
+            bot=bot,
+        )
+        await cmd_stats(fake_message)
+        await callback.answer()
+    except Exception as e:
+        logger.error(
+            f"❌ Ошибка в admin_stats_callback | "
+            f"user_id={callback.from_user.id if callback.from_user else None} | "
+            f"error={type(e).__name__}: {str(e)}",
+            exc_info=True
+        )
+        try:
+            await callback.answer("❌ Ошибка при загрузке статистики", show_alert=True)
+        except Exception:
+            pass  # Игнорируем ошибки при ответе на callback
 
 
 # ---------- Обработчик необработанных callback_query ----------
