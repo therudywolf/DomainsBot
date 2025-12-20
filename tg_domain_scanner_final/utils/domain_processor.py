@@ -17,6 +17,7 @@ from utils.formatting import build_report
 from utils.history import add_check_result
 from utils.stats import record_domain_check, record_error
 from utils.error_logging import log_error_with_context, format_error_for_user
+from utils.types import DNSInfo, SSLInfo
 from config import settings
 
 logger = logging.getLogger(__name__)

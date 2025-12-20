@@ -12,7 +12,7 @@ from aiogram import Bot, types
 from aiogram.enums import ParseMode
 
 from utils.formatting import build_report, build_report_keyboard
-from utils.access_control import has_permission
+from utils.types import DNSInfo, SSLInfo
 
 
 def format_csv_report(

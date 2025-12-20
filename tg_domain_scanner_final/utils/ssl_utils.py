@@ -120,8 +120,17 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
     connector = _get_gost_connector()
     last_error: Optional[Exception] = None
     
-    # Пробуем каждый endpoint
+    # Пробуем каждый endpoint с ограничением времени
+    max_total_time = timeout * len(endpoints)  # Максимальное время на все попытки
+    start_time = asyncio.get_event_loop().time()
+    
     for attempt, url in enumerate(endpoints, 1):
+        # Проверяем, не превысили ли общий таймаут
+        elapsed = asyncio.get_event_loop().time() - start_time
+        if elapsed >= max_total_time:
+            logger.warning(f"Превышен общий таймаут для проверки GOST {domain} ({elapsed:.2f}s)")
+            break
+            
         try:
             async with aiohttp.ClientSession(
                 timeout=timeout_obj,
@@ -149,7 +158,7 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
             logger.error(f"Неожиданная ошибка при проверке GOST для {domain} через {url}: {e}", exc_info=True)
             last_error = e
         
-        # Небольшая задержка перед следующей попыткой
+        # Небольшая задержка перед следующей попыткой (только если не последняя)
         if attempt < len(endpoints):
             await asyncio.sleep(settings.GOST_RETRY_DELAY)
     
@@ -257,10 +266,15 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
     }
     
     try:
+        # Используем более короткий таймаут для обычного SSL соединения
+        ssl_timeout = min(settings.HTTP_TIMEOUT, 10)  # Не более 10 секунд
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(domain, port, ssl=ctx),
-            timeout=settings.GOST_CHECK_TIMEOUT
+            timeout=ssl_timeout
         )
+    except asyncio.TimeoutError:
+        logger.debug(f"Таймаут при подключении к {domain}:{port}")
+        return cert_info
     except Exception as e:
         logger.debug(f"Не удалось подключиться к {domain}:{port}: {e}")
         return cert_info
