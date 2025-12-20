@@ -165,48 +165,19 @@ async def check_rate_limit(user_id: int, operation_type: str = "default") -> boo
     """
     Проверяет rate limit для пользователя (async версия).
     
-    Поддерживает разные лимиты для разных типов операций:
-    - "default": обычные операции (30 запросов/минуту)
-    - "heavy": тяжелые операции, проверка доменов (10 запросов/минуту)
-    - "file_upload": загрузка файлов (5 запросов/5 минут)
+    ВНИМАНИЕ: Rate limiting отключен - функция всегда возвращает True.
+    Это сделано для предотвращения блокировки пользователей.
     
     Args:
         user_id: ID пользователя
         operation_type: Тип операции ("default", "heavy", "file_upload")
         
     Returns:
-        True если запрос разрешен
+        True (rate limiting отключен)
     """
-    # Проверяем временную блокировку
-    async with _block_lock:
-        if user_id in _blocked_users:
-            unblock_time = _blocked_users[user_id]
-            if time.time() < unblock_time:
-                return False
-            else:
-                # Блокировка истекла, удаляем
-                del _blocked_users[user_id]
-    
-    # Выбираем соответствующий лимитер
-    if operation_type == "heavy":
-        limiter = _heavy_operation_limiter
-    elif operation_type == "file_upload":
-        limiter = _file_upload_limiter
-    else:
-        limiter = _rate_limiter
-    
-    allowed = await limiter.is_allowed(user_id)
-    
-    # Если лимит превышен, блокируем пользователя
-    if not allowed:
-        async with _block_lock:
-            _blocked_users[user_id] = time.time() + BLOCK_DURATION
-        logger.warning(
-            f"Пользователь {user_id} заблокирован на {BLOCK_DURATION} секунд "
-            f"за превышение лимита для операции {operation_type}"
-        )
-    
-    return allowed
+    # Rate limiting отключен - всегда разрешаем запросы
+    # Это предотвращает блокировку пользователей при активном использовании
+    return True
 
 
 async def get_remaining_requests(user_id: int, operation_type: str = "default") -> int:

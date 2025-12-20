@@ -3386,6 +3386,7 @@ async def admin_stats_callback(callback: types.CallbackQuery):
     
     # Используем существующую команду stats
     from aiogram.types import Message
+    # Создаем fake_message с правильным bot из callback
     fake_message = Message(
         message_id=callback.message.message_id,
         date=callback.message.date,
@@ -3393,6 +3394,7 @@ async def admin_stats_callback(callback: types.CallbackQuery):
         from_user=callback.from_user,
         content_type="text",
         text="/stats",
+        bot=callback.bot,  # Передаем bot из callback
     )
     await cmd_stats(fake_message)
     await callback.answer()
