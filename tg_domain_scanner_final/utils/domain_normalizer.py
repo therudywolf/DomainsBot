@@ -11,10 +11,16 @@ import re
 from urllib.parse import urlparse
 from typing import Optional, List
 
+# Максимальная длина домена (RFC 1035)
+MAX_DOMAIN_LENGTH = 253
+
 # Регулярное выражение для валидации домена
 DOMAIN_VALID_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
 )
+
+# Запрещенные символы для защиты от инъекций
+FORBIDDEN_CHARS = re.compile(r'[<>"\'\x00-\x1f\x7f-\x9f]')
 
 
 def normalize_domain(domain: str) -> Optional[str]:
@@ -33,6 +39,14 @@ def normalize_domain(domain: str) -> Optional[str]:
         Нормализованный домен или None если не удалось извлечь валидный домен
     """
     if not domain:
+        return None
+    
+    # Проверка максимальной длины (до нормализации)
+    if len(domain) > MAX_DOMAIN_LENGTH * 2:  # Учитываем возможные протоколы и пути
+        return None
+    
+    # Защита от инъекций: проверяем наличие запрещенных символов
+    if FORBIDDEN_CHARS.search(domain):
         return None
     
     # Удаляем пробелы
@@ -74,8 +88,8 @@ def normalize_domain(domain: str) -> Optional[str]:
         # Убираем точки в начале и конце
         hostname = hostname.strip('.')
         
-        # Валидация домена
-        if hostname and DOMAIN_VALID_RE.fullmatch(hostname):
+        # Валидация домена: проверка длины и формата
+        if hostname and len(hostname) <= MAX_DOMAIN_LENGTH and DOMAIN_VALID_RE.fullmatch(hostname):
             return hostname
         
     except Exception:
@@ -101,8 +115,8 @@ def normalize_domain(domain: str) -> Optional[str]:
     # Убираем пробелы и точки
     cleaned = cleaned.strip().strip('.')
     
-    # Финальная валидация
-    if cleaned and DOMAIN_VALID_RE.fullmatch(cleaned):
+    # Финальная валидация: проверка длины и формата
+    if cleaned and len(cleaned) <= MAX_DOMAIN_LENGTH and DOMAIN_VALID_RE.fullmatch(cleaned):
         return cleaned
     
     return None

@@ -1,10 +1,14 @@
 """Утилиты для получения DNS записей доменов."""
 
+from __future__ import annotations
+
 import logging
 from utils.cache import ttl_cache
 import dns.asyncresolver
 import socket
 from typing import Dict, List
+
+from utils.types import DNSInfo
 
 logger = logging.getLogger(__name__)
 

@@ -323,18 +323,13 @@ def build_report_keyboard(
     """
     Создает клавиатуру с кнопками для управления отчетом.
     
-    Args:
-        domain: Домен для быстрых действий
-        current_mode: Текущий режим отчета (full/brief)
-        user_id: ID пользователя
-        has_waf_permission: Есть ли разрешение на проверку WAF
-        
-    Returns:
-        InlineKeyboardMarkup с кнопками
-    """
-    from aiogram import types as aiogram_types
-    """
-    Создает клавиатуру с кнопками для управления отчетом.
+    Включает:
+    - Переключение режима отчета (полный/краткий)
+    - Быструю проверку WAF
+    - Быструю проверку сертификатов
+    - Повторную проверку домена
+    - Детальный просмотр блоков (DNS, SSL, WAF)
+    - Поделиться отчетом
     
     Args:
         domain: Домен для быстрых действий
@@ -345,6 +340,7 @@ def build_report_keyboard(
     Returns:
         InlineKeyboardMarkup с кнопками
     """
+    from aiogram import types as aiogram_types
     buttons = []
     
     # Кнопки переключения режима
@@ -382,11 +378,44 @@ def build_report_keyboard(
     if quick_actions:
         buttons.append(quick_actions)
     
+    # Кнопки детального просмотра блоков
+    detail_buttons = []
+    detail_buttons.append(
+        aiogram_types.InlineKeyboardButton(
+            text="📡 Детали DNS",
+            callback_data=f"detail_dns_{domain}",
+        )
+    )
+    detail_buttons.append(
+        aiogram_types.InlineKeyboardButton(
+            text="🔒 Детали SSL",
+            callback_data=f"detail_ssl_{domain}",
+        )
+    )
+    if has_waf_permission:
+        detail_buttons.append(
+            aiogram_types.InlineKeyboardButton(
+                text="🛡️ Детали WAF",
+                callback_data=f"detail_waf_{domain}",
+            )
+        )
+    
+    if detail_buttons:
+        buttons.append(detail_buttons)
+    
     # Кнопка перепроверки домена
     buttons.append([
         aiogram_types.InlineKeyboardButton(
             text="🔄 Перепроверить домен",
             callback_data=f"recheck_{domain}",
+        )
+    ])
+    
+    # Кнопка "Поделиться" (через inline режим)
+    buttons.append([
+        aiogram_types.InlineKeyboardButton(
+            text="📤 Поделиться",
+            switch_inline_query=domain,
         )
     ])
     

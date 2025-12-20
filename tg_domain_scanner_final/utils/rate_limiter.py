@@ -3,23 +3,26 @@ Rate limiter для защиты от спама и злоупотреблени
 
 Реализует sliding window алгоритм для ограничения количества запросов
 от одного пользователя за определенный период времени.
+
+Использует asyncio.Lock для async-safe операций.
 """
 
+import asyncio
 import time
 import logging
 from collections import defaultdict, deque
 from typing import Dict, Deque
-from threading import Lock
 
 logger = logging.getLogger(__name__)
 
 
-class RateLimiter:
+class AsyncRateLimiter:
     """
-    Rate limiter с sliding window алгоритмом.
+    Async rate limiter с sliding window алгоритмом.
     
     Ограничивает количество запросов от пользователя за определенный период.
     Использует sliding window для более точного контроля.
+    Все операции async-safe с использованием asyncio.Lock.
     """
     
     def __init__(self, max_requests: int = 30, window_seconds: int = 60):
@@ -34,9 +37,9 @@ class RateLimiter:
         self.window_seconds = window_seconds
         # Хранилище временных меток запросов для каждого пользователя
         self._requests: Dict[int, Deque[float]] = defaultdict(lambda: deque())
-        self._lock = Lock()
+        self._lock = asyncio.Lock()
     
-    def is_allowed(self, user_id: int) -> bool:
+    async def is_allowed(self, user_id: int) -> bool:
         """
         Проверяет, разрешен ли запрос от пользователя.
         
@@ -49,7 +52,7 @@ class RateLimiter:
         now = time.time()
         window_start = now - self.window_seconds
         
-        with self._lock:
+        async with self._lock:
             # Получаем очередь запросов пользователя
             user_requests = self._requests[user_id]
             
@@ -69,7 +72,7 @@ class RateLimiter:
             user_requests.append(now)
             return True
     
-    def get_remaining(self, user_id: int) -> int:
+    async def get_remaining(self, user_id: int) -> int:
         """
         Получает количество оставшихся запросов для пользователя.
         
@@ -82,7 +85,7 @@ class RateLimiter:
         now = time.time()
         window_start = now - self.window_seconds
         
-        with self._lock:
+        async with self._lock:
             user_requests = self._requests[user_id]
             
             # Удаляем устаревшие запросы
@@ -91,18 +94,18 @@ class RateLimiter:
             
             return max(0, self.max_requests - len(user_requests))
     
-    def reset(self, user_id: int) -> None:
+    async def reset(self, user_id: int) -> None:
         """
         Сбрасывает счетчик запросов для пользователя.
         
         Args:
             user_id: ID пользователя
         """
-        with self._lock:
+        async with self._lock:
             if user_id in self._requests:
                 self._requests[user_id].clear()
     
-    def cleanup_old_users(self, max_idle_seconds: int = 3600) -> int:
+    async def cleanup_old_users(self, max_idle_seconds: int = 3600) -> int:
         """
         Удаляет данные о неактивных пользователях.
         
@@ -115,7 +118,7 @@ class RateLimiter:
         now = time.time()
         removed = 0
         
-        with self._lock:
+        async with self._lock:
             users_to_remove = []
             
             for user_id, requests in self._requests.items():
@@ -138,38 +141,99 @@ class RateLimiter:
         return removed
 
 
-# Глобальный экземпляр rate limiter
-# По умолчанию: 30 запросов в минуту
-_rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
+# Глобальные экземпляры async rate limiter для разных типов операций
+# По умолчанию: 30 запросов в минуту для обычных операций
+_rate_limiter = AsyncRateLimiter(max_requests=30, window_seconds=60)
+
+# Более строгий лимит для тяжелых операций (проверка доменов)
+_heavy_operation_limiter = AsyncRateLimiter(max_requests=10, window_seconds=60)
+
+# Лимит для загрузки файлов
+_file_upload_limiter = AsyncRateLimiter(max_requests=5, window_seconds=300)  # 5 файлов в 5 минут
+
+# Временная блокировка пользователей при превышении лимита
+_blocked_users: Dict[int, float] = {}  # {user_id: unblock_timestamp}
+_block_lock = asyncio.Lock()
+BLOCK_DURATION = 300  # 5 минут блокировки
 
 
-def check_rate_limit(user_id: int) -> bool:
+async def check_rate_limit(user_id: int, operation_type: str = "default") -> bool:
     """
-    Проверяет rate limit для пользователя.
+    Проверяет rate limit для пользователя (async версия).
+    
+    Поддерживает разные лимиты для разных типов операций:
+    - "default": обычные операции (30 запросов/минуту)
+    - "heavy": тяжелые операции, проверка доменов (10 запросов/минуту)
+    - "file_upload": загрузка файлов (5 запросов/5 минут)
     
     Args:
         user_id: ID пользователя
+        operation_type: Тип операции ("default", "heavy", "file_upload")
         
     Returns:
         True если запрос разрешен
     """
-    return _rate_limiter.is_allowed(user_id)
+    # Проверяем временную блокировку
+    async with _block_lock:
+        if user_id in _blocked_users:
+            unblock_time = _blocked_users[user_id]
+            if time.time() < unblock_time:
+                return False
+            else:
+                # Блокировка истекла, удаляем
+                del _blocked_users[user_id]
+    
+    # Выбираем соответствующий лимитер
+    if operation_type == "heavy":
+        limiter = _heavy_operation_limiter
+    elif operation_type == "file_upload":
+        limiter = _file_upload_limiter
+    else:
+        limiter = _rate_limiter
+    
+    allowed = await limiter.is_allowed(user_id)
+    
+    # Если лимит превышен, блокируем пользователя
+    if not allowed:
+        async with _block_lock:
+            _blocked_users[user_id] = time.time() + BLOCK_DURATION
+        logger.warning(
+            f"Пользователь {user_id} заблокирован на {BLOCK_DURATION} секунд "
+            f"за превышение лимита для операции {operation_type}"
+        )
+    
+    return allowed
 
 
-def get_remaining_requests(user_id: int) -> int:
+async def get_remaining_requests(user_id: int, operation_type: str = "default") -> int:
     """
-    Получает количество оставшихся запросов.
+    Получает количество оставшихся запросов (async версия).
     
     Args:
         user_id: ID пользователя
+        operation_type: Тип операции ("default", "heavy", "file_upload")
         
     Returns:
         Количество оставшихся запросов
     """
-    return _rate_limiter.get_remaining(user_id)
+    # Проверяем блокировку
+    async with _block_lock:
+        if user_id in _blocked_users:
+            unblock_time = _blocked_users[user_id]
+            if time.time() < unblock_time:
+                return 0
+    
+    # Выбираем соответствующий лимитер
+    if operation_type == "heavy":
+        limiter = _heavy_operation_limiter
+    elif operation_type == "file_upload":
+        limiter = _file_upload_limiter
+    else:
+        limiter = _rate_limiter
+    
+    return await limiter.get_remaining(user_id)
 
 
-def cleanup_rate_limiter() -> None:
-    """Очищает неактивных пользователей из rate limiter."""
-    _rate_limiter.cleanup_old_users()
-
+async def cleanup_rate_limiter() -> None:
+    """Очищает неактивных пользователей из rate limiter (async версия)."""
+    await _rate_limiter.cleanup_old_users()

@@ -6,9 +6,13 @@
 - Light: простая проверка через GET запрос (см. waf_light_check.py)
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Sequence, Optional
+from typing import Sequence, Optional, Tuple
 import aiohttp
+
+from utils.types import WAFMode
 
 from utils.cache import ttl_cache
 from utils.waf_light_check import test_waf_light

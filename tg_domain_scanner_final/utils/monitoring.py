@@ -23,6 +23,7 @@ from aiogram import Bot
 from utils.dns_utils import fetch_dns
 from utils.ssl_utils import fetch_ssl
 from utils.waf_utils import test_waf
+from utils.file_utils import async_read_json, async_write_json
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -31,15 +32,31 @@ logger = logging.getLogger(__name__)
 MONITORING_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "monitoring_db.json"
 MONITORING_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Блокировка для потокобезопасности
+# Блокировка для потокобезопасности (для синхронных операций)
 _monitoring_lock = RLock()
+
+# Async блокировка для async операций
+_monitoring_async_lock = asyncio.Lock()
 
 # Глобальная переменная для фоновой задачи
 _monitoring_task: Optional[asyncio.Task] = None
 
+# Максимальное количество сохраненных состояний для каждого домена
+MAX_STATE_HISTORY = 10
 
-def _load_monitoring_db() -> Dict[str, Any]:
-    """Загружает БД мониторинга из файла."""
+
+async def _load_monitoring_db() -> Dict[str, Any]:
+    """Асинхронно загружает БД мониторинга из файла."""
+    return await async_read_json(MONITORING_DB_PATH, {})
+
+
+async def _save_monitoring_db(data: Dict[str, Any]) -> None:
+    """Асинхронно сохраняет БД мониторинга в файл."""
+    await async_write_json(MONITORING_DB_PATH, data)
+
+
+def _load_monitoring_db_sync() -> Dict[str, Any]:
+    """Синхронная версия загрузки БД (для обратной совместимости)."""
     if not MONITORING_DB_PATH.exists():
         return {}
     
@@ -51,8 +68,8 @@ def _load_monitoring_db() -> Dict[str, Any]:
         return {}
 
 
-def _save_monitoring_db(data: Dict[str, Any]) -> None:
-    """Сохраняет БД мониторинга в файл."""
+def _save_monitoring_db_sync(data: Dict[str, Any]) -> None:
+    """Синхронная версия сохранения БД (для обратной совместимости)."""
     try:
         with open(MONITORING_DB_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2, default=str)
@@ -86,8 +103,9 @@ def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
                 "added_at": datetime.now().isoformat(),
                 "last_check": None,
                 "last_state": None,
+                "state_history": [],  # История состояний для отслеживания изменений
             }
-            _save_monitoring_db(db)
+            _save_monitoring_db_sync(db)
             logger.info(f"Домен {domain} добавлен в мониторинг для пользователя {user_id}")
             return True
         
@@ -105,12 +123,12 @@ def remove_domain_from_monitoring(user_id: int, domain: str) -> bool:
         True если домен был удален, False если его не было
     """
     with _monitoring_lock:
-        db = _load_monitoring_db()
+        db = _load_monitoring_db_sync()
         
         user_key = str(user_id)
         if user_key in db and domain in db[user_key]["domains"]:
             del db[user_key]["domains"][domain]
-            _save_monitoring_db(db)
+            _save_monitoring_db_sync(db)
             logger.info(f"Домен {domain} удален из мониторинга для пользователя {user_id}")
             return True
         
@@ -127,7 +145,7 @@ def get_monitored_domains(user_id: int) -> List[str]:
         Список доменов
     """
     with _monitoring_lock:
-        db = _load_monitoring_db()
+        db = _load_monitoring_db_sync()
         user_key = str(user_id)
         if user_key in db:
             return list(db[user_key]["domains"].keys())
@@ -142,7 +160,7 @@ def set_monitoring_interval(user_id: int, interval_minutes: int) -> None:
         interval_minutes: Интервал в минутах
     """
     with _monitoring_lock:
-        db = _load_monitoring_db()
+        db = _load_monitoring_db_sync()
         user_key = str(user_id)
         if user_key not in db:
             db[user_key] = {
@@ -152,7 +170,7 @@ def set_monitoring_interval(user_id: int, interval_minutes: int) -> None:
             }
         else:
             db[user_key]["interval_minutes"] = interval_minutes
-        _save_monitoring_db(db)
+        _save_monitoring_db_sync(db)
 
 
 def get_monitoring_interval(user_id: int) -> int:
@@ -165,7 +183,7 @@ def get_monitoring_interval(user_id: int) -> int:
         Интервал в минутах (по умолчанию 15)
     """
     with _monitoring_lock:
-        db = _load_monitoring_db()
+        db = _load_monitoring_db_sync()
         user_key = str(user_id)
         if user_key in db:
             return db[user_key].get("interval_minutes", 15)
@@ -203,7 +221,7 @@ def is_monitoring_enabled(user_id: int) -> bool:
         True если мониторинг включен
     """
     with _monitoring_lock:
-        db = _load_monitoring_db()
+        db = _load_monitoring_db_sync()
         user_key = str(user_id)
         if user_key in db:
             return db[user_key].get("enabled", True)
@@ -290,7 +308,7 @@ def _compare_states(old_state: Optional[Dict[str, Any]], new_state: Dict[str, An
     if old_waf != new_waf:
         changes.append(f"WAF: {'Да' if old_waf else 'Нет'} → {'Да' if new_waf else 'Нет'}")
     
-    # Проверка дат сертификатов
+    # Проверка дат сертификатов с уведомлениями о приближающемся истечении
     old_cert_date = old_state.get("cert_not_after")
     new_cert_date = new_state.get("cert_not_after")
     if old_cert_date != new_cert_date:
@@ -298,8 +316,16 @@ def _compare_states(old_state: Optional[Dict[str, Any]], new_state: Dict[str, An
             try:
                 cert_date = datetime.fromisoformat(new_cert_date.replace('Z', '+00:00'))
                 days_left = (cert_date - datetime.now(cert_date.tzinfo)).days
-                if days_left < 30:
-                    changes.append(f"Сертификат истекает через {days_left} дней")
+                # Уведомления за 30, 14, 7 дней до истечения
+                if days_left <= 30 and days_left > 0:
+                    if days_left <= 7:
+                        changes.append(f"⚠️ СРОЧНО: Сертификат истекает через {days_left} дней!")
+                    elif days_left <= 14:
+                        changes.append(f"⚠️ ВНИМАНИЕ: Сертификат истекает через {days_left} дней")
+                    else:
+                        changes.append(f"📅 Сертификат истекает через {days_left} дней")
+                elif days_left <= 0:
+                    changes.append(f"❌ Сертификат истек!")
             except Exception:
                 pass
     
@@ -310,10 +336,50 @@ def _compare_states(old_state: Optional[Dict[str, Any]], new_state: Dict[str, An
             try:
                 gost_cert_date = datetime.fromisoformat(new_gost_cert_date.replace('Z', '+00:00'))
                 days_left = (gost_cert_date - datetime.now(gost_cert_date.tzinfo)).days
-                if days_left < 30:
-                    changes.append(f"GOST сертификат истекает через {days_left} дней")
+                # Уведомления за 30, 14, 7 дней до истечения
+                if days_left <= 30 and days_left > 0:
+                    if days_left <= 7:
+                        changes.append(f"⚠️ СРОЧНО: GOST сертификат истекает через {days_left} дней!")
+                    elif days_left <= 14:
+                        changes.append(f"⚠️ ВНИМАНИЕ: GOST сертификат истекает через {days_left} дней")
+                    else:
+                        changes.append(f"📅 GOST сертификат истекает через {days_left} дней")
+                elif days_left <= 0:
+                    changes.append(f"❌ GOST сертификат истек!")
             except Exception:
                 pass
+    
+    # Проверяем приближающееся истечение даже если дата не изменилась
+    # (для периодических напоминаний)
+    if new_cert_date:
+        try:
+            cert_date = datetime.fromisoformat(new_cert_date.replace('Z', '+00:00'))
+            days_left = (cert_date - datetime.now(cert_date.tzinfo)).days
+            # Отправляем напоминание если до истечения осталось 30, 14 или 7 дней
+            if days_left in [30, 14, 7] and days_left > 0:
+                if days_left <= 7:
+                    changes.append(f"⚠️ НАПОМИНАНИЕ: Сертификат истекает через {days_left} дней!")
+                elif days_left <= 14:
+                    changes.append(f"⚠️ НАПОМИНАНИЕ: Сертификат истекает через {days_left} дней")
+                else:
+                    changes.append(f"📅 НАПОМИНАНИЕ: Сертификат истекает через {days_left} дней")
+        except Exception:
+            pass
+    
+    if new_gost_cert_date:
+        try:
+            gost_cert_date = datetime.fromisoformat(new_gost_cert_date.replace('Z', '+00:00'))
+            days_left = (gost_cert_date - datetime.now(gost_cert_date.tzinfo)).days
+            # Отправляем напоминание если до истечения осталось 30, 14 или 7 дней
+            if days_left in [30, 14, 7] and days_left > 0:
+                if days_left <= 7:
+                    changes.append(f"⚠️ НАПОМИНАНИЕ: GOST сертификат истекает через {days_left} дней!")
+                elif days_left <= 14:
+                    changes.append(f"⚠️ НАПОМИНАНИЕ: GOST сертификат истекает через {days_left} дней")
+                else:
+                    changes.append(f"📅 НАПОМИНАНИЕ: GOST сертификат истекает через {days_left} дней")
+        except Exception:
+            pass
     
     # Проверка DNS
     for dns_type in ["dns_a", "dns_aaaa", "dns_mx", "dns_ns"]:
@@ -326,7 +392,7 @@ def _compare_states(old_state: Optional[Dict[str, Any]], new_state: Dict[str, An
     return changes
 
 
-async def _check_domain(bot: Bot, user_id: int, domain: str) -> None:
+async def _check_domain(bot: Bot, user_id: int, domain: str, notification_chat_id: Optional[int] = None) -> None:
     """Проверяет один домен и отправляет уведомления при изменениях.
     
     Args:
@@ -342,30 +408,67 @@ async def _check_domain(bot: Bot, user_id: int, domain: str) -> None:
             logger.warning(f"Не удалось получить состояние для {domain}")
             return
         
-        # Загружаем БД и сравниваем с предыдущим состоянием
-        with _monitoring_lock:
-            db = _load_monitoring_db()
+        # Загружаем БД и сравниваем с предыдущим состоянием (async-safe)
+        async with _monitoring_async_lock:
+            db = await _load_monitoring_db()
             user_key = str(user_id)
             
             if user_key not in db or domain not in db[user_key]["domains"]:
                 return
             
-            old_state = db[user_key]["domains"][domain].get("last_state")
+            domain_data = db[user_key]["domains"][domain]
+            old_state = domain_data.get("last_state")
             changes = _compare_states(old_state, new_state)
             
             # Обновляем состояние
-            db[user_key]["domains"][domain]["last_state"] = new_state
-            db[user_key]["domains"][domain]["last_check"] = datetime.now().isoformat()
-            _save_monitoring_db(db)
+            domain_data["last_state"] = new_state
+            domain_data["last_check"] = datetime.now().isoformat()
+            
+            # Добавляем в историю состояний
+            state_history = domain_data.get("state_history", [])
+            state_history.append({
+                "timestamp": datetime.now().isoformat(),
+                "state": new_state
+            })
+            
+            # Ограничиваем размер истории (предотвращение утечек памяти)
+            if len(state_history) > MAX_STATE_HISTORY:
+                state_history = state_history[-MAX_STATE_HISTORY:]
+            
+            domain_data["state_history"] = state_history
+            
+            # Сохраняем БД (async-safe)
+            await _save_monitoring_db(db)
         
         # Отправляем уведомления если есть изменения
         if changes:
-            message = f"🔔 Изменение для {domain}:\n" + "\n".join(f"• {c}" for c in changes)
+            notification_text = f"🔔 Изменение для {domain}:\n" + "\n".join(f"• {c}" for c in changes)
+            
+            # Определяем чат для отправки уведомления
+            # Если передан notification_chat_id, используем его, иначе получаем из настроек
+            target_chat_id = notification_chat_id
+            if target_chat_id is None:
+                try:
+                    target_chat_id = get_notification_chat_id(user_id)
+                except Exception:
+                    target_chat_id = None
+            
+            # Если чат не настроен, отправляем в личные сообщения
+            if target_chat_id is None:
+                target_chat_id = user_id
+            
             try:
-                await bot.send_message(user_id, message)
-                logger.info(f"Отправлено уведомление пользователю {user_id} для {domain}")
+                await bot.send_message(target_chat_id, notification_text)
+                logger.info(f"Отправлено уведомление в чат {target_chat_id} для пользователя {user_id} (домен: {domain})")
             except Exception as e:
-                logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
+                logger.warning(f"Не удалось отправить уведомление в чат {target_chat_id} для пользователя {user_id}: {e}")
+                # Fallback: отправляем в личные сообщения
+                if target_chat_id != user_id:
+                    try:
+                        await bot.send_message(user_id, notification_text)
+                        logger.info(f"Отправлено уведомление в личные сообщения пользователю {user_id} (домен: {domain})")
+                    except Exception as e2:
+                        logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e2}")
     
     except Exception as e:
         logger.error(f"Ошибка при проверке домена {domain}: {e}", exc_info=True)
@@ -379,11 +482,17 @@ async def _monitoring_loop(bot: Bot) -> None:
     """
     logger.info("Запущен цикл мониторинга доменов")
     
+    # Семафор для контроля параллельных проверок
+    semaphore = asyncio.Semaphore(settings.CONCURRENCY)
+    
     while True:
         try:
-            # Загружаем БД
-            with _monitoring_lock:
-                db = _load_monitoring_db()
+            # Загружаем БД (async-safe)
+            async with _monitoring_async_lock:
+                db = await _load_monitoring_db()
+            
+            # Собираем задачи для параллельного выполнения
+            tasks = []
             
             # Проверяем каждого пользователя
             for user_key, user_data in db.items():
@@ -408,9 +517,26 @@ async def _monitoring_loop(bot: Bot) -> None:
                             pass
                     
                     if should_check:
-                        await _check_domain(bot, user_id, domain)
-                        # Небольшая задержка между проверками
-                        await asyncio.sleep(1)
+                        # Получаем ID чата для уведомлений из настроек пользователя
+                        notification_chat_id = None
+                        try:
+                            notification_chat_id = get_notification_chat_id(user_id)
+                        except Exception:
+                            pass
+                        
+                        # Создаем задачу с семафором для контроля параллелизма
+                        async def check_with_semaphore(domain: str, user_id: int, chat_id: Optional[int]):
+                            async with semaphore:
+                                await _check_domain(bot, user_id, domain, notification_chat_id=chat_id)
+                        
+                        tasks.append(check_with_semaphore(domain, user_id, notification_chat_id))
+            
+            # Выполняем все проверки параллельно
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Периодическая очистка неактивных пользователей и старых данных
+            await _cleanup_monitoring_data(db)
             
             # Ждем перед следующей итерацией
             await asyncio.sleep(60)  # Проверяем каждую минуту
@@ -418,6 +544,59 @@ async def _monitoring_loop(bot: Bot) -> None:
         except Exception as e:
             logger.error(f"Ошибка в цикле мониторинга: {e}", exc_info=True)
             await asyncio.sleep(60)
+
+
+async def _cleanup_monitoring_data(db: Dict[str, Any]) -> None:
+    """
+    Очищает неактивных пользователей и старые данные из мониторинга.
+    
+    Args:
+        db: База данных мониторинга
+    """
+    try:
+        now = datetime.now()
+        max_idle_days = 90  # Удаляем пользователей неактивных более 90 дней
+        
+        users_to_remove = []
+        
+        for user_key, user_data in db.items():
+            domains = user_data.get("domains", {})
+            
+            # Очищаем старые состояния для каждого домена
+            for domain, domain_data in domains.items():
+                state_history = domain_data.get("state_history", [])
+                if len(state_history) > MAX_STATE_HISTORY:
+                    domain_data["state_history"] = state_history[-MAX_STATE_HISTORY:]
+            
+            # Проверяем активность пользователя
+            has_recent_activity = False
+            for domain_data in domains.values():
+                last_check = domain_data.get("last_check")
+                if last_check:
+                    try:
+                        last_check_dt = datetime.fromisoformat(last_check.replace('Z', '+00:00'))
+                        if (now - last_check_dt.replace(tzinfo=None)).days < max_idle_days:
+                            has_recent_activity = True
+                            break
+                    except Exception:
+                        pass
+            
+            # Если нет активности и нет доменов, помечаем на удаление
+            if not has_recent_activity and not domains:
+                users_to_remove.append(user_key)
+        
+        # Удаляем неактивных пользователей
+        for user_key in users_to_remove:
+            del db[user_key]
+            logger.debug(f"Удален неактивный пользователь {user_key} из мониторинга")
+        
+        # Сохраняем очищенные данные
+        if users_to_remove:
+            async with _monitoring_async_lock:
+                await _save_monitoring_db(db)
+                
+    except Exception as e:
+        logger.error(f"Ошибка при очистке данных мониторинга: {e}", exc_info=True)
 
 
 def start_monitoring(bot: Bot) -> None:

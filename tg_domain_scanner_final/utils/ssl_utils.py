@@ -7,6 +7,8 @@
 - Получения информации о сертификатах (обычный и GOST TLS)
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import ssl
@@ -14,6 +16,8 @@ import os
 import random
 from typing import Dict, Any, Optional, List
 from datetime import timezone
+
+from utils.types import SSLInfo
 
 import aiohttp
 from cryptography import x509

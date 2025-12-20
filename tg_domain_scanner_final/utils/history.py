@@ -84,10 +84,19 @@ def add_check_result(
         "waf_method": waf_method,
     }
     
-    with _history_lock:
-        history = _load_history()
-        history.append(entry)
-        _save_history(history)
+    # Используем буферизованную запись для оптимизации
+    from utils.buffered_writer import get_buffered_writer
+    
+    writer = get_buffered_writer(HISTORY_FILE, flush_interval=60, max_buffer_size=20)
+    
+    def add_entry(data: List[Dict[str, Any]]) -> None:
+        """Добавляет запись в историю."""
+        data.append(entry)
+        # Ограничиваем размер истории
+        if len(data) > MAX_HISTORY_ENTRIES:
+            data[:] = data[-MAX_HISTORY_ENTRIES:]
+    
+    writer.add_operation(add_entry)
 
 
 def get_domain_history(domain: str, limit: int = 10) -> List[Dict[str, Any]]:

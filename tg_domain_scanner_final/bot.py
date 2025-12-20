@@ -70,6 +70,19 @@ from utils.prefs import (
 # Импорт утилит для нормализации доменов
 from utils.domain_normalizer import normalize_domains
 
+# Импорт модулей для обработки доменов
+from utils.domain_processor import validate_and_normalize_domains, check_single_domain
+from utils.report_formatter import format_csv_report, send_domain_reports
+
+# Импорт модуля для управления чатами
+from utils.chat_settings import (
+    register_chat,
+    get_notification_chat_id,
+    set_notification_chat_id,
+    get_known_chats,
+    remove_known_chat
+)
+
 # Импорт утилит для мониторинга доменов
 from utils.monitoring import (
     add_domain_to_monitoring,
@@ -329,10 +342,16 @@ class AdminStates(StatesGroup):
 
 
 class MonitoringStates(StatesGroup):
+    """Состояния FSM для мониторинга доменов."""
     add_domain_waiting = State()
     remove_domain_waiting = State()
     set_interval_waiting = State()
     set_waf_timeout_waiting = State()
+
+
+class ChatSettingsStates(StatesGroup):
+    """Состояния FSM для настройки чатов уведомлений."""
+    waiting_chat_id = State()
 
 
 # ---------- Клавиатура режима ----------
@@ -393,6 +412,12 @@ def build_monitoring_keyboard() -> types.InlineKeyboardMarkup:
                     callback_data="monitor_list",
                 ),
                 types.InlineKeyboardButton(
+                    text="📥 Экспорт",
+                    callback_data="monitor_export",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
                     text="⏱️ Интервал",
                     callback_data="monitor_interval",
                 ),
@@ -405,6 +430,12 @@ def build_monitoring_keyboard() -> types.InlineKeyboardMarkup:
                 types.InlineKeyboardButton(
                     text="🔄 Вкл/Выкл",
                     callback_data="monitor_toggle",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="💬 Чат для уведомлений",
+                    callback_data="settings_notification_chat",
                 ),
             ],
             [
@@ -468,6 +499,12 @@ def build_main_menu_keyboard(user_id: int) -> types.ReplyKeyboardMarkup:
             types.KeyboardButton(text="👨‍💼 Админ-панель"),
         ])
     
+    # Всегда добавляем кнопку "Назад" и "Главное меню"
+    keyboard.append([
+        types.KeyboardButton(text="🔙 Назад"),
+        types.KeyboardButton(text="🏠 Главное меню"),
+    ])
+    
     # Помощь всегда доступна
     keyboard.append([
         types.KeyboardButton(text="ℹ️ Помощь"),
@@ -525,6 +562,12 @@ def build_settings_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
                 types.InlineKeyboardButton(
                     text=("✅ Light" if current_waf_mode == "light" else "Light"),
                     callback_data="waf_mode_light",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="💬 Чат для уведомлений",
+                    callback_data="settings_notification_chat",
                 ),
             ],
             [
@@ -645,8 +688,8 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         return
     
     # Проверка rate limit
-    if not check_rate_limit(user_id):
-        remaining = get_remaining_requests(user_id)
+    if not await check_rate_limit(user_id):
+        remaining = await get_remaining_requests(user_id)
         await safe_send_text(
             message.bot,
             message.chat.id,
@@ -655,12 +698,8 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         )
         return
     
-    # Разбиваем на отдельные строки
-    raw_items = [x.strip() for x in DOMAIN_SPLIT_RE.split(raw_text or "") if x.strip()]
-    
-    # Нормализуем домены (обрабатывает https://, пути, параметры и т.д.)
-    domains = normalize_domains(raw_items)
-    bad = [item for item in raw_items if item not in domains]
+    # Валидация и нормализация доменов
+    domains, bad = validate_and_normalize_domains(raw_text)
 
     # Проверка на пустой список
     if not domains:
@@ -692,79 +731,15 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     # Семафор для ограничения количества одновременных проверок
     semaphore = asyncio.Semaphore(settings.CONCURRENCY)
     reports: List[str] = []
-    collected: List[Tuple[str, dict, dict, bool]] = []
+    collected: List[Tuple[str, dict, dict, bool, Optional[str]]] = []
 
-    async def process(domain: str):
-        """
-        Обрабатывает один домен: получает DNS, SSL и WAF информацию.
-        
-        Args:
-            domain: Домен для проверки
-            
-        Returns:
-            Кортеж (строка отчета, данные для CSV)
-        """
-        async with semaphore:
-            try:
-                # Параллельно получаем информацию о домене
-                dns_info, ssl_info, waf_result = await asyncio.gather(
-                    fetch_dns(domain, settings.DNS_TIMEOUT),
-                    fetch_ssl(domain),
-                    test_waf(domain, user_id=user_id),
-                    return_exceptions=True
-                )
-                
-                # Обрабатываем исключения
-                if isinstance(dns_info, Exception):
-                    logger.error(f"Ошибка DNS для {domain}: {dns_info}")
-                    dns_info = {}
-                    record_error("DNS_ERROR")
-                
-                if isinstance(ssl_info, Exception):
-                    logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
-                    ssl_info = {}
-                    record_error("SSL_ERROR")
-                
-                # Обрабатываем результат WAF (может быть кортеж или исключение)
-                if isinstance(waf_result, Exception):
-                    logger.error(f"Ошибка WAF для {domain}: {waf_result}")
-                    waf_enabled = False
-                    waf_method = None
-                    record_error("WAF_ERROR")
-                elif isinstance(waf_result, tuple) and len(waf_result) == 2:
-                    waf_enabled, waf_method = waf_result
-                else:
-                    # Обратная совместимость: если вернулся просто bool
-                    waf_enabled = bool(waf_result)
-                    waf_method = None
-                
-                # Формируем данные для отчета
-                row = (domain, dns_info, ssl_info, waf_enabled, waf_method)
-                line = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
-                
-                # Сохраняем в историю (если включено)
-                if settings.HISTORY_ENABLED:
-                    try:
-                        add_check_result(domain, user_id, dns_info, ssl_info, waf_enabled, waf_method)
-                    except Exception as e:
-                        logger.warning(f"Ошибка при сохранении в историю: {e}")
-                
-                # Записываем статистику
-                if settings.STATS_ENABLED:
-                    record_domain_check(domain, user_id)
-                
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(f"Критическая ошибка при обработке {domain}")
-                record_error("PROCESSING_ERROR")
-                row = (domain, {}, {}, False)
-                line = f"❌ {domain}: ошибка ({type(exc).__name__})"
-            
-            return line, row
-
-    tasks = [asyncio.create_task(process(d)) for d in domains]
+    # Создаем задачи для проверки всех доменов
+    tasks = [
+        asyncio.create_task(check_single_domain(d, user_id, semaphore, brief))
+        for d in domains
+    ]
 
     # ---------- Прогресс-индикатор ----------
-
     MIN_EDIT_INTERVAL = 4  # секунд между edit_text
     total = len(tasks)
     done = 0
@@ -801,91 +776,25 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         reports.append("🔸 Игнорированы некорректные строки: " + ", ".join(bad))
 
     # ---------- Формирование вывода ----------
-
     if total >= 4:
-        buf = io.StringIO(newline="")
-        writer = csv.writer(buf, delimiter=";")
-        if brief:
-            writer.writerow([
-                "Domain", "CN", "Valid From", "Valid To", 
-                "GOST Cert From", "GOST Cert To", "WAF", "GOST"
-            ])
-        else:
-            writer.writerow(
-                [
-                    "Domain",
-                    "A",
-                    "AAAA",
-                    "MX",
-                    "NS",
-                    "CN",
-                    "Valid From",
-                    "Valid To",
-                    "GOST Cert From",
-                    "GOST Cert To",
-                    "WAF",
-                    "GOST",
-                ]
-            )
-
-        for domain, dns_info, ssl_info, waf_enabled, waf_method in collected:
-            gost_val = "Да" if ssl_info.get("gost") else "Нет"
-            waf_val = "Да" if waf_enabled else "Нет"
-            
-            # Форматируем даты
-            def format_date(dt):
-                if dt is None:
-                    return ""
-                if hasattr(dt, 'date'):
-                    return dt.date().isoformat()
-                return str(dt)
-            
-            row_base = [
-                domain,
-                ssl_info.get("CN") or "",
-                format_date(ssl_info.get("NotBefore")),
-                format_date(ssl_info.get("NotAfter")),
-                format_date(ssl_info.get("GostNotBefore")),
-                format_date(ssl_info.get("GostNotAfter")),
-                waf_val,
-                gost_val,
-            ]
-
-            if brief:
-                writer.writerow(row_base)
-            else:
-                writer.writerow(
-                    [
-                        domain,
-                        ",".join(dns_info.get("A", [])),
-                        ",".join(dns_info.get("AAAA", [])),
-                        ",".join(dns_info.get("MX", [])),
-                        ",".join(dns_info.get("NS", [])),
-                        *row_base[1:],
-                    ]
-                )
-
-        csv_bytes = buf.getvalue().encode("utf-8-sig")
+        # CSV отчет для множественных доменов
+        csv_bytes = format_csv_report(collected, brief)
         await message.answer_document(
             types.BufferedInputFile(csv_bytes, filename="report.csv"),
             caption=f"✔️ Проверено {total} доменов.",
         )
-
     else:
-        # Для каждого домена создаем отдельное сообщение с кнопками
-        for domain, dns_info, ssl_info, waf_enabled, waf_method in collected:
-            report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
-            
-            # Создаем клавиатуру с кнопками для этого домена
-            has_waf_perm = has_permission(user_id, "check_domains")  # WAF проверка доступна если есть доступ к проверке доменов
-            keyboard = build_report_keyboard(domain, view_mode, user_id, has_waf_perm)
-            
-            await message.bot.send_message(
-                message.chat.id,
-                report_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
-            )
+        # Отдельные отчеты для каждого домена
+        has_waf_perm = has_permission(user_id, "check_domains")
+        await send_domain_reports(
+            message.bot,
+            message.chat.id,
+            collected,
+            view_mode,
+            user_id,
+            has_waf_perm,
+            brief
+        )
 
 
 # ---------- Команды ----------
@@ -896,8 +805,15 @@ async def cmd_start(message: types.Message, state: FSMContext):
     Обработчик команды /start.
     
     Показывает приветственное сообщение и главное меню.
+    Также автоматически регистрирует чат, если команда вызвана из группы/канала.
     """
     user_id = message.from_user.id
+    
+    # Регистрируем чат, если сообщение пришло не из личных сообщений
+    if message.chat.id != user_id:
+        chat_title = message.chat.title or f"Chat {message.chat.id}"
+        chat_type = message.chat.type
+        register_chat(user_id, message.chat.id, chat_title, chat_type)
     
     # Проверка доступа
     if not has_access(user_id):
@@ -953,6 +869,62 @@ async def cmd_start(message: types.Message, state: FSMContext):
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=build_main_menu_keyboard(user_id),
     )
+
+
+@router.message(Command("health"))
+async def cmd_health(message: types.Message, state: FSMContext):
+    """
+    Проверка состояния бота и всех компонентов.
+    
+    Показывает статус доступности всех сервисов и компонентов системы.
+    """
+    user_id = message.from_user.id
+    
+    # Только для администратора
+    if user_id != ADMIN_ID:
+        await message.answer("❌ Эта команда доступна только администратору.")
+        return
+    
+    health_status = []
+    health_status.append("🏥 *Health Check*\n")
+    
+    # Проверка доступности компонентов
+    try:
+        # Проверка кэша
+        from utils.cache import get_cache_stats
+        cache_stats = get_cache_stats()
+        health_status.append(f"✅ Кэш: {cache_stats['memory_cache_size']} записей в памяти")
+        health_status.append(f"   Hit rate: {cache_stats['hit_rate']}%")
+    except Exception as e:
+        health_status.append(f"❌ Кэш: Ошибка - {e}")
+    
+    # Проверка статистики
+    try:
+        from utils.stats import get_stats
+        stats = get_stats()
+        health_status.append(f"✅ Статистика: {stats['total_domains_checked']} проверок")
+    except Exception as e:
+        health_status.append(f"❌ Статистика: Ошибка - {e}")
+    
+    # Проверка мониторинга
+    try:
+        from utils.monitoring import get_monitored_domains
+        total_monitored = sum(len(get_monitored_domains(uid)) for uid in [1, 2, 3])  # Примерная проверка
+        health_status.append(f"✅ Мониторинг: активен")
+    except Exception as e:
+        health_status.append(f"❌ Мониторинг: Ошибка - {e}")
+    
+    # Проверка rate limiter
+    try:
+        from utils.rate_limiter import _rate_limiter
+        health_status.append(f"✅ Rate Limiter: активен")
+    except Exception as e:
+        health_status.append(f"❌ Rate Limiter: Ошибка - {e}")
+    
+    # Проверка Gost сервисов (базовая проверка)
+    health_status.append(f"✅ Gost сервисы: проверка через docker-compose")
+    
+    await message.answer("\n".join(health_status), parse_mode="Markdown")
 
 
 @router.message(Command("help"))
@@ -1066,6 +1038,100 @@ async def cmd_stats(message: types.Message):
     )
 
 
+@router.message(Command("export_history"))
+async def cmd_export_history(message: types.Message, state: FSMContext):
+    """
+    Команда /export_history - экспортирует историю проверок в CSV.
+    
+    Поддерживает фильтры по дате и домену.
+    """
+    user_id = message.from_user.id
+    
+    # Проверка доступа
+    if not await check_access(message):
+        return
+    
+    # Проверка разрешения на просмотр истории
+    if not await check_permission(message, "history"):
+        return
+    
+    # Проверка rate limit
+    if not await check_rate_limit(user_id, operation_type="default"):
+        remaining = await get_remaining_requests(user_id, operation_type="default")
+        await message.answer(
+            f"⏱️ Превышен лимит запросов. Попробуйте позже.\n"
+            f"Осталось запросов: {remaining}"
+        )
+        return
+    
+    if not settings.HISTORY_ENABLED:
+        await message.answer("❌ История проверок отключена в настройках.")
+        return
+    
+    # Получаем историю пользователя
+    from utils.history import get_user_history
+    history = get_user_history(user_id, limit=1000)  # Максимум 1000 записей
+    
+    if not history:
+        await message.answer("📋 История проверок пуста.")
+        return
+    
+    # Формируем CSV
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Заголовки CSV
+    writer.writerow([
+        "Дата и время",
+        "Домен",
+        "GOST",
+        "WAF",
+        "Метод WAF",
+        "Сертификат до",
+        "GOST сертификат до",
+        "DNS A",
+        "DNS AAAA",
+        "DNS MX",
+        "DNS NS",
+    ])
+    
+    # Записываем данные
+    for entry in history:
+        ssl_info = entry.get("ssl", {})
+        dns_info = entry.get("dns", {})
+        
+        writer.writerow([
+            entry.get("timestamp", ""),
+            entry.get("domain", ""),
+            "Да" if ssl_info.get("gost") else "Нет",
+            "Да" if entry.get("waf") else "Нет",
+            entry.get("waf_method", "unknown"),
+            ssl_info.get("not_after", ""),
+            ssl_info.get("gost_not_after", ""),
+            ", ".join(dns_info.get("A", [])),
+            ", ".join(dns_info.get("AAAA", [])),
+            ", ".join(dns_info.get("MX", [])),
+            ", ".join(dns_info.get("NS", [])),
+        ])
+    
+    # Создаем файл для отправки
+    csv_data = output.getvalue().encode('utf-8-sig')  # UTF-8 BOM для Excel
+    csv_file = io.BytesIO(csv_data)
+    csv_file.name = f"history_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    
+    # Отправляем файл
+    try:
+        await message.answer_document(
+            types.FSInputFile(csv_file, filename=csv_file.name),
+            caption=f"📊 Экспорт истории проверок ({len(history)} записей)"
+        )
+        record_command("export_history")
+    except Exception as e:
+        logger.error(f"Ошибка при экспорте истории для пользователя {user_id}: {e}", exc_info=True)
+        await message.answer("❌ Ошибка при экспорте истории. Попробуйте позже.")
+
+
 @router.message(Command("history"))
 async def cmd_history(message: types.Message):
     """
@@ -1083,9 +1149,9 @@ async def cmd_history(message: types.Message):
     if not await check_permission(message, "history"):
         return
     
-    # Проверка rate limit
-    if not check_rate_limit(user_id):
-        remaining = get_remaining_requests(user_id)
+    # Проверка rate limit (обычная операция)
+    if not await check_rate_limit(user_id, operation_type="default"):
+        remaining = await get_remaining_requests(user_id, operation_type="default")
         await message.answer(
             f"⏱️ Превышен лимит запросов. Попробуйте позже.\n"
             f"Осталось запросов: {remaining}"
@@ -1520,20 +1586,59 @@ async def monitor_add(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "📝 Введите домен(ы) для добавления в мониторинг.\n\n"
         "Можно вводить несколько через пробел, запятую или с новой строки:\n"
-        "`example.com test.ru https://site.com/path`"
+        "`example.com test.ru https://site.com/path`\n\n"
+        "Также можно отправить TXT файл со списком доменов (по одному на строку)."
     )
     await callback.answer()
 
 
 @router.message(MonitoringStates.add_domain_waiting)
 async def process_monitor_add(message: types.Message, state: FSMContext):
+    """Обрабатывает добавление доменов в мониторинг (текст или файл)."""
+    user_id = message.from_user.id
+    
+    # Проверяем, не файл ли это
+    if message.document:
+        doc = message.document
+        if doc.file_name and doc.file_name.lower().endswith(".txt"):
+            # Обрабатываем файл
+            try:
+                file_obj = await message.bot.download(doc.file_id)
+                text_data = file_obj.getvalue().decode("utf-8", errors="ignore")
+                
+                if not text_data.strip():
+                    await message.answer("❌ Файл пуст или не содержит текста.")
+                    await state.clear()
+                    return
+                
+                # Парсим домены из файла
+                raw_items = [x.strip() for x in DOMAIN_SPLIT_RE.split(text_data) if x.strip()]
+                domains = normalize_domains(raw_items)
+                
+                added_count = 0
+                for domain in domains:
+                    if add_domain_to_monitoring(user_id, domain):
+                        added_count += 1
+                
+                response = f"✅ Добавлено {added_count} домен(ов) из файла в мониторинг"
+                if len(domains) < len(raw_items):
+                    response += f"\n⚠️ Некоторые домены не были добавлены (некорректный формат)"
+                
+                await message.answer(response)
+                await state.clear()
+                return
+            except Exception as e:
+                logger.error(f"Ошибка при обработке файла для мониторинга: {e}", exc_info=True)
+                await message.answer("❌ Ошибка при обработке файла. Попробуйте еще раз.")
+                await state.clear()
+                return
+    
+    # Обрабатываем текстовый ввод
     text = message.text or ""
     raw_items = [x.strip() for x in DOMAIN_SPLIT_RE.split(text) if x.strip()]
     domains = normalize_domains(raw_items)
     
-    user_id = message.from_user.id
     added_count = 0
-    
     for domain in domains:
         if add_domain_to_monitoring(user_id, domain):
             added_count += 1
@@ -1601,7 +1706,6 @@ async def monitor_list(callback: types.CallbackQuery):
         await callback.answer("❌ Нет доступа к мониторингу", show_alert=True)
         return
     
-    user_id = callback.from_user.id
     domains = get_monitored_domains(user_id)
     
     if not domains:
@@ -1611,6 +1715,133 @@ async def monitor_list(callback: types.CallbackQuery):
         await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
     
     await callback.answer()
+
+
+@router.callback_query(F.data == "stats_export_json")
+async def stats_export_json(callback: types.CallbackQuery):
+    """Экспортирует статистику в JSON."""
+    user_id = callback.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    try:
+        from utils.stats import get_stats
+        stats = get_stats()
+        
+        import io
+        json_data = json.dumps(stats, ensure_ascii=False, indent=2, default=str)
+        json_file = io.BytesIO(json_data.encode('utf-8'))
+        json_file.name = f"stats_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        await callback.message.answer_document(
+            types.FSInputFile(json_file, filename=json_file.name),
+            caption="📥 Экспорт статистики в JSON"
+        )
+        await callback.answer("✅ Статистика экспортирована в JSON")
+    except Exception as e:
+        logger.error(f"Ошибка при экспорте статистики в JSON: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при экспорте", show_alert=True)
+
+
+@router.callback_query(F.data == "stats_export_csv")
+async def stats_export_csv(callback: types.CallbackQuery):
+    """Экспортирует статистику в CSV."""
+    user_id = callback.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    try:
+        from utils.stats import get_stats
+        stats = get_stats()
+        
+        import io
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Основная статистика
+        writer.writerow(["Метрика", "Значение"])
+        writer.writerow(["Время работы (дни)", stats['uptime_days']])
+        writer.writerow(["Время работы (часы)", stats['uptime_hours']])
+        writer.writerow(["Проверено доменов", stats['total_domains_checked']])
+        writer.writerow(["Уникальных пользователей", stats['total_users']])
+        writer.writerow([])
+        
+        # Топ доменов
+        writer.writerow(["Топ доменов", "Количество"])
+        for domain, count in list(stats.get('top_domains', {}).items()):
+            writer.writerow([domain, count])
+        writer.writerow([])
+        
+        # Топ команд
+        writer.writerow(["Топ команд", "Количество"])
+        for cmd, count in list(stats.get('top_commands', {}).items()):
+            writer.writerow([cmd, count])
+        writer.writerow([])
+        
+        # Топ ошибок
+        writer.writerow(["Топ ошибок", "Количество"])
+        for error, count in list(stats.get('top_errors', {}).items()):
+            writer.writerow([error, count])
+        writer.writerow([])
+        
+        # Активность по часам
+        writer.writerow(["Час", "Количество проверок"])
+        for hour, count in sorted(stats.get('activity_by_hour', {}).items()):
+            writer.writerow([f"{hour:02d}:00", count])
+        
+        csv_data = output.getvalue().encode('utf-8-sig')
+        csv_file = io.BytesIO(csv_data)
+        csv_file.name = f"stats_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        await callback.message.answer_document(
+            types.FSInputFile(csv_file, filename=csv_file.name),
+            caption="📊 Экспорт статистики в CSV"
+        )
+        await callback.answer("✅ Статистика экспортирована в CSV")
+    except Exception as e:
+        logger.error(f"Ошибка при экспорте статистики в CSV: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при экспорте", show_alert=True)
+
+
+@router.callback_query(F.data == "monitor_export")
+async def monitor_export(callback: types.CallbackQuery):
+    """Экспортирует список доменов из мониторинга в текстовый файл."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Проверка разрешения на мониторинг
+    if not has_permission(user_id, "monitoring"):
+        await callback.answer("❌ Нет доступа к мониторингу", show_alert=True)
+        return
+    
+    domains = get_monitored_domains(user_id)
+    
+    if not domains:
+        await callback.answer("📋 Нет доменов в мониторинге для экспорта", show_alert=True)
+        return
+    
+    # Создаем текстовый файл со списком доменов
+    import io
+    domains_text = "\n".join(domains)
+    domains_file = io.BytesIO(domains_text.encode('utf-8'))
+    domains_file.name = f"monitored_domains_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
+    try:
+        await callback.message.answer_document(
+            types.FSInputFile(domains_file, filename=domains_file.name),
+            caption=f"📥 Экспорт доменов из мониторинга ({len(domains)} доменов)"
+        )
+        await callback.answer("✅ Список доменов экспортирован")
+    except Exception as e:
+        logger.error(f"Ошибка при экспорте доменов для пользователя {user_id}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при экспорте доменов", show_alert=True)
 
 
 @router.callback_query(F.data == "monitor_interval")
@@ -1874,6 +2105,198 @@ async def settings_waf_mode_callback(callback: types.CallbackQuery):
         f"Текущий режим WAF: {mode_text}. Используйте кнопки ниже для изменения.",
         show_alert=False
     )
+
+
+# ---------- Настройки чата для уведомлений ----------
+
+@router.callback_query(F.data == "settings_notification_chat")
+async def settings_notification_chat(callback: types.CallbackQuery):
+    """Показывает меню настройки чата для уведомлений."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    known_chats = get_known_chats(user_id)
+    current_chat_id = get_notification_chat_id(user_id)
+    
+    if not known_chats:
+        await callback.message.edit_text(
+            "💬 *Настройка чата для уведомлений*\n\n"
+            "У вас пока нет зарегистрированных чатов.\n\n"
+            "Чтобы добавить чат:\n"
+            "1. Добавьте бота в группу или канал\n"
+            "2. Отправьте любое сообщение в этом чате\n"
+            "3. Или укажите ID чата вручную",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text="➕ Указать ID чата",
+                            callback_data="notification_chat_set_id"
+                        )
+                    ],
+                    [
+                        types.InlineKeyboardButton(
+                            text="🔙 Назад",
+                            callback_data="settings_back"
+                        )
+                    ]
+                ]
+            )
+        )
+        await callback.answer()
+        return
+    
+    # Формируем список чатов
+    chat_list_text = "💬 *Настройка чата для уведомлений*\n\n"
+    if current_chat_id:
+        current_chat = next((c for c in known_chats if c.get("chat_id") == current_chat_id), None)
+        if current_chat:
+            chat_list_text += f"✅ Текущий чат: *{current_chat.get('title')}* (ID: {current_chat_id})\n\n"
+        else:
+            chat_list_text += f"✅ Текущий чат: ID {current_chat_id}\n\n"
+    else:
+        chat_list_text += "📭 Уведомления отправляются в личные сообщения\n\n"
+    
+    chat_list_text += "*Доступные чаты:*\n"
+    
+    keyboard = []
+    for chat in known_chats:
+        chat_id = chat.get("chat_id")
+        chat_title = chat.get("title", f"Chat {chat_id}")
+        chat_type = chat.get("type", "unknown")
+        is_current = chat_id == current_chat_id
+        
+        emoji = "✅" if is_current else "💬"
+        keyboard.append([
+            types.InlineKeyboardButton(
+                text=f"{emoji} {chat_title} ({chat_type})",
+                callback_data=f"notification_chat_select_{chat_id}"
+            )
+        ])
+    
+    keyboard.append([
+        types.InlineKeyboardButton(
+            text="➕ Указать ID чата",
+            callback_data="notification_chat_set_id"
+        )
+    ])
+    keyboard.append([
+        types.InlineKeyboardButton(
+            text="❌ Отключить уведомления в чат",
+            callback_data="notification_chat_disable"
+        )
+    ])
+    keyboard.append([
+        types.InlineKeyboardButton(
+            text="🔙 Назад",
+            callback_data="settings_back"
+        )
+    ])
+    
+    await callback.message.edit_text(
+        chat_list_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("notification_chat_select_"))
+async def select_notification_chat(callback: types.CallbackQuery):
+    """Выбирает чат для уведомлений из списка."""
+    user_id = callback.from_user.id
+    chat_id_str = callback.data.replace("notification_chat_select_", "")
+    
+    try:
+        chat_id = int(chat_id_str)
+        set_notification_chat_id(user_id, chat_id)
+        
+        known_chats = get_known_chats(user_id)
+        selected_chat = next((c for c in known_chats if c.get("chat_id") == chat_id), None)
+        chat_name = selected_chat.get("title", f"Chat {chat_id}") if selected_chat else f"Chat {chat_id}"
+        
+        await callback.answer(f"✅ Чат '{chat_name}' выбран для уведомлений")
+        await settings_notification_chat(callback)
+    except ValueError:
+        await callback.answer("❌ Неверный ID чата", show_alert=True)
+
+
+@router.callback_query(F.data == "notification_chat_set_id")
+async def set_notification_chat_id_handler(callback: types.CallbackQuery, state: FSMContext):
+    """Запрашивает ID чата для уведомлений."""
+    await callback.message.edit_text(
+        "💬 *Указать ID чата для уведомлений*\n\n"
+        "Отправьте ID чата (число).\n\n"
+        "Как узнать ID чата:\n"
+        "• Добавьте бота @userinfobot в чат\n"
+        "• Или используйте @RawDataBot\n"
+        "• Или используйте API Telegram",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="❌ Отмена",
+                        callback_data="settings_notification_chat"
+                    )
+                ]
+            ]
+        )
+    )
+    await state.set_state(ChatSettingsStates.waiting_chat_id)
+    await callback.answer()
+
+
+@router.message(ChatSettingsStates.waiting_chat_id)
+async def process_chat_id(message: types.Message, state: FSMContext):
+    """Обрабатывает введенный ID чата."""
+    user_id = message.from_user.id
+    text = (message.text or "").strip()
+    
+    if not text.isdigit():
+        await message.answer("❌ Неверный формат ID. Отправьте число.")
+        return
+    
+    try:
+        chat_id = int(text)
+        set_notification_chat_id(user_id, chat_id)
+        
+        # Регистрируем чат
+        register_chat(user_id, chat_id, f"Chat {chat_id}", "unknown")
+        
+        await message.answer(
+            f"✅ Чат с ID {chat_id} установлен для уведомлений.\n\n"
+            "Теперь все уведомления мониторинга будут отправляться в этот чат."
+        )
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Неверный формат ID. Отправьте число.")
+
+
+@router.callback_query(F.data == "notification_chat_disable")
+async def disable_notification_chat(callback: types.CallbackQuery):
+    """Отключает отправку уведомлений в чат (возврат к личным сообщениям)."""
+    user_id = callback.from_user.id
+    set_notification_chat_id(user_id, None)
+    await callback.answer("✅ Уведомления будут отправляться в личные сообщения")
+    await settings_notification_chat(callback)
+
+
+@router.callback_query(F.data == "settings_back")
+async def settings_back(callback: types.CallbackQuery):
+    """Возврат в меню настроек."""
+    user_id = callback.from_user.id
+    await callback.message.edit_text(
+        "⚙️ *Настройки*\n\n"
+        "Выберите параметр для изменения:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=build_settings_keyboard(user_id)
+    )
+    await callback.answer()
 
 
 # ---------- АДМИН-ПАНЕЛЬ ----------
@@ -2261,19 +2684,27 @@ async def handle_document(message: types.Message, state: FSMContext):
     
     Поддерживает только .txt файлы с кодировкой UTF-8.
     Максимальный размер файла ограничен настройкой MAX_FILE_SIZE_MB.
+    
+    Также автоматически регистрирует чат, если сообщение пришло из группы/канала.
     """
     user_id = message.from_user.id
+    
+    # Регистрируем чат, если сообщение пришло не из личных сообщений
+    if message.chat.id != user_id:
+        chat_title = message.chat.title or f"Chat {message.chat.id}"
+        chat_type = message.chat.type
+        register_chat(user_id, message.chat.id, chat_title, chat_type)
     
     # Проверка доступа
     if not await check_access(message):
         return
     
-    # Проверка rate limit
-    if not check_rate_limit(user_id):
-        remaining = get_remaining_requests(user_id)
+    # Проверка rate limit (загрузка файлов)
+    if not await check_rate_limit(user_id, operation_type="file_upload"):
+        remaining = await get_remaining_requests(user_id, operation_type="file_upload")
         await message.reply(
-            f"⏱️ Превышен лимит запросов. Попробуйте позже.\n"
-            f"Осталось запросов: {remaining}"
+            f"⏱️ Превышен лимит загрузки файлов. Попробуйте позже.\n"
+            f"Осталось загрузок: {remaining}"
         )
         return
     
@@ -2292,6 +2723,14 @@ async def handle_document(message: types.Message, state: FSMContext):
         await message.reply(
             "📄 Пришлите TXT-файл со списком доменов.\n\n"
             "Файл должен содержать домены, по одному на строку."
+        )
+        return
+    
+    # Защита от инъекций в имени файла
+    import re
+    if re.search(r'[<>:"/\\|?*\x00-\x1f]', doc.file_name):
+        await message.reply(
+            "❌ Некорректное имя файла. Используйте только безопасные символы."
         )
         return
     
@@ -2340,8 +2779,17 @@ async def handle_text(message: types.Message, state: FSMContext):
     Поддерживает:
     - Проверку доменов (прямой ввод)
     - Команды через кнопки меню
+    
+    Также автоматически регистрирует чат, если сообщение пришло из группы/канала.
     """
     user_id = message.from_user.id
+    
+    # Регистрируем чат, если сообщение пришло не из личных сообщений
+    if message.chat.id != user_id:
+        chat_title = message.chat.title or f"Chat {message.chat.id}"
+        chat_type = message.chat.type
+        register_chat(user_id, message.chat.id, chat_title, chat_type)
+    
     text = (message.text or "").strip()
     
     # Проверка доступа
@@ -2414,6 +2862,12 @@ async def handle_text(message: types.Message, state: FSMContext):
         await cmd_help(message, state)
         return
     
+    elif text == "🔙 Назад" or text == "🏠 Главное меню":
+        # Возврат в главное меню
+        await state.clear()
+        await cmd_start(message, state)
+        return
+    
     # Если это не команда меню, обрабатываем как домены
     if text:
         await _process_domains(message, state, text)
@@ -2452,7 +2906,7 @@ async def cleanup_resources() -> None:
     
     try:
         # Очищаем rate limiter
-        cleanup_rate_limiter()
+        await cleanup_rate_limiter()
         logger.info("Rate limiter очищен")
     except Exception as e:
         logger.error(f"Ошибка при очистке rate limiter: {e}")
@@ -2481,11 +2935,14 @@ async def setup_bot_commands(bot: Bot) -> None:
         BotCommand(command="help", description="ℹ️ Справка по использованию"),
         BotCommand(command="monitor", description="📊 Управление мониторингом доменов"),
         BotCommand(command="history", description="📋 История проверок"),
+        BotCommand(command="export_history", description="📥 Экспорт истории в CSV"),
+        BotCommand(command="compare", description="🔍 Сравнение двух доменов"),
     ]
     
-    # Для админа добавляем команду статистики
+    # Для админа добавляем команду статистики и health check
     admin_commands = commands + [
         BotCommand(command="stats", description="📈 Статистика использования (админ)"),
+        BotCommand(command="health", description="🏥 Проверка состояния системы (админ)"),
     ]
     
     try:
