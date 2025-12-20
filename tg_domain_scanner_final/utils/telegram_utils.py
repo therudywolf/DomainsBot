@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Sequence, Union
 from aiogram import Bot
+from aiogram import types
 
 logger = logging.getLogger(__name__)
 
