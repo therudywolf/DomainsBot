@@ -247,16 +247,22 @@ async def _get_domain_state(domain: str, user_id: int) -> Dict[str, Any]:
             return_exceptions=True
         )
         
-        # Обрабатываем исключения
-        if isinstance(dns_info, Exception):
+        # Обрабатываем исключения (включая CancelledError, который является BaseException)
+        if isinstance(dns_info, BaseException):
             logger.error(f"Ошибка DNS для {domain}: {dns_info}")
             dns_info = {}
-        if isinstance(ssl_info, Exception):
+        if isinstance(ssl_info, BaseException):
             logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
             ssl_info = {}
-        if isinstance(waf_enabled, Exception):
+        if isinstance(waf_enabled, BaseException):
             logger.error(f"Ошибка WAF для {domain}: {waf_enabled}")
             waf_enabled = False
+        
+        # Убеждаемся, что данные правильного типа
+        if not isinstance(ssl_info, dict):
+            ssl_info = {}
+        if not isinstance(dns_info, dict):
+            dns_info = {}
         
         return {
             "gost": ssl_info.get("gost", False) if isinstance(ssl_info, dict) else False,

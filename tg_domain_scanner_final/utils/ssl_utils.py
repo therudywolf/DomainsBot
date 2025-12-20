@@ -83,11 +83,23 @@ def _get_gost_connector() -> aiohttp.TCPConnector:
         TCPConnector для переиспользования соединений
     """
     global _gost_connector
-    if _gost_connector is None or _gost_connector.closed:
+    try:
+        # Проверяем, что connector существует и не закрыт
+        if _gost_connector is None or _gost_connector.closed or _gost_connector.is_closed:
+            _gost_connector = None  # Сбрасываем перед созданием нового
+            _gost_connector = aiohttp.TCPConnector(
+                limit=20,
+                limit_per_host=5,
+                force_close=False,  # Переиспользование соединений
+                ttl_dns_cache=300,
+            )
+    except Exception as e:
+        logger.warning(f"Ошибка при проверке connector: {e}, создаем новый")
+        _gost_connector = None
         _gost_connector = aiohttp.TCPConnector(
             limit=20,
             limit_per_host=5,
-            force_close=False,  # Переиспользование соединений
+            force_close=False,
             ttl_dns_cache=300,
         )
     return _gost_connector
@@ -132,27 +144,47 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
             break
             
         try:
+            # Проверяем состояние connector перед использованием
+            connector = _get_gost_connector()
+            if connector.closed or connector.is_closed:
+                logger.warning(f"Connector закрыт, пересоздаем для {domain}")
+                connector = _get_gost_connector()
+            
             async with aiohttp.ClientSession(
                 timeout=timeout_obj,
                 connector=connector
             ) as session:
                 logger.debug(f"Проверка GOST для {domain} через {url} (попытка {attempt}/{len(endpoints)})")
                 
-                async with session.get(url, params={"domain": domain}) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        result = bool(data.get("is_gost"))
-                        logger.debug(f"GOST проверка для {domain}: {result} (через {url})")
-                        return result
+                try:
+                    async with session.get(url, params={"domain": domain}) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            result = bool(data.get("is_gost"))
+                            logger.debug(f"GOST проверка для {domain}: {result} (через {url})")
+                            return result
+                        else:
+                            logger.warning(f"GOST endpoint {url} вернул статус {resp.status} для {domain}")
+                            last_error = Exception(f"HTTP {resp.status}")
+                except RuntimeError as e:
+                    if "Session is closed" in str(e):
+                        logger.warning(f"Сессия закрыта для {domain} через {url}, пропускаем")
+                        last_error = e
                     else:
-                        logger.warning(f"GOST endpoint {url} вернул статус {resp.status} для {domain}")
-                        last_error = Exception(f"HTTP {resp.status}")
+                        raise
                         
         except asyncio.TimeoutError:
             logger.warning(f"Таймаут при проверке GOST для {domain} через {url}")
             last_error = asyncio.TimeoutError("Timeout")
-        except aiohttp.ClientError as e:
-            logger.warning(f"Ошибка клиента при проверке GOST для {domain} через {url}: {e}")
+        except (aiohttp.ClientError, RuntimeError) as e:
+            error_msg = str(e)
+            if "Session is closed" in error_msg or "Connector is closed" in error_msg:
+                logger.warning(f"Соединение закрыто при проверке GOST для {domain} через {url}: {e}")
+                # Пересоздаем connector при следующей попытке
+                global _gost_connector
+                _gost_connector = None
+            else:
+                logger.warning(f"Ошибка клиента при проверке GOST для {domain} через {url}: {e}")
             last_error = e
         except Exception as e:
             logger.error(f"Неожиданная ошибка при проверке GOST для {domain} через {url}: {e}", exc_info=True)

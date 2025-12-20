@@ -5,7 +5,9 @@
 разбиением на части (лимит Telegram - 4096 символов на сообщение).
 """
 
+import asyncio
 import logging
+import time
 from typing import Sequence, Union
 from aiogram import Bot
 
@@ -13,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 # Максимальная длина сообщения в Telegram (в символах)
 MAX_LEN = 4096
+
+# Rate limiting для Telegram API
+# Telegram позволяет ~30 сообщений в секунду, но для безопасности используем более консервативный лимит
+_MIN_DELAY_BETWEEN_MESSAGES = 0.05  # Минимальная задержка между сообщениями (50ms = 20 сообщений/сек)
+_last_message_time: float = 0
+_message_lock = asyncio.Lock()
 
 
 async def safe_send_text(
@@ -50,9 +58,21 @@ async def safe_send_text(
         # Если передан другой тип, конвертируем в строку
         text = str(text)
     
-    # Разбиваем текст на части и отправляем
+    # Разбиваем текст на части и отправляем с rate limiting
+    global _last_message_time
+    
     for offset in range(0, len(text), MAX_LEN):
         chunk = text[offset : offset + MAX_LEN]
+        
+        # Rate limiting: добавляем задержку между сообщениями
+        async with _message_lock:
+            current_time = time.time()
+            time_since_last = current_time - _last_message_time
+            if time_since_last < _MIN_DELAY_BETWEEN_MESSAGES:
+                delay = _MIN_DELAY_BETWEEN_MESSAGES - time_since_last
+                await asyncio.sleep(delay)
+            _last_message_time = time.time()
+        
         try:
             await bot.send_message(chat_id, chunk, **kwargs)
         except Exception as e:

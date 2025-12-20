@@ -60,7 +60,12 @@ class BufferedFileWriter:
         
         try:
             with open(self.file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                # Убеждаемся, что данные - это словарь
+                if not isinstance(data, dict):
+                    logger.warning(f"Данные в {self.file_path} не являются словарем, возвращаем пустой словарь")
+                    return {}
+                return data
         except Exception as e:
             logger.error(f"Ошибка при загрузке {self.file_path}: {e}")
             return {}

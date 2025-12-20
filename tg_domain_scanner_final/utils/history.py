@@ -85,12 +85,37 @@ def add_check_result(
     }
     
     # Используем буферизованную запись для оптимизации
-    from utils.buffered_writer import get_buffered_writer
+    from utils.buffered_writer import BufferedFileWriter
     
-    writer = get_buffered_writer(HISTORY_FILE, flush_interval=60, max_buffer_size=20)
+    def load_history() -> List[Dict[str, Any]]:
+        """Загружает историю из файла (для buffered_writer)."""
+        return _load_history()
+    
+    def save_history(data: List[Dict[str, Any]]) -> bool:
+        """Сохраняет историю в файл (для buffered_writer)."""
+        try:
+            _save_history(data)
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении истории: {e}")
+            return False
+    
+    writer = BufferedFileWriter(
+        HISTORY_FILE,
+        flush_interval=60,
+        max_buffer_size=20,
+        load_func=load_history,
+        save_func=save_history
+    )
+    writer.start_periodic_flush()
     
     def add_entry(data: List[Dict[str, Any]]) -> None:
         """Добавляет запись в историю."""
+        # Убеждаемся, что data - это список
+        if not isinstance(data, list):
+            logger.warning(f"Данные истории не являются списком: {type(data)}, преобразуем")
+            data = []
+        
         data.append(entry)
         # Ограничиваем размер истории
         if len(data) > MAX_HISTORY_ENTRIES:

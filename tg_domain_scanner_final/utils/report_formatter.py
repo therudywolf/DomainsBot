@@ -13,6 +13,7 @@ from aiogram.enums import ParseMode
 
 from utils.formatting import build_report, build_report_keyboard
 from utils.types import DNSInfo, SSLInfo
+from utils.telegram_utils import safe_send_text
 
 
 def format_csv_report(
@@ -119,7 +120,9 @@ async def send_domain_reports(
         # Создаем клавиатуру с кнопками для этого домена
         keyboard = build_report_keyboard(domain, view_mode, user_id, has_waf_perm)
         
-        await bot.send_message(
+        # Используем safe_send_text для rate limiting и разбиения длинных сообщений
+        await safe_send_text(
+            bot,
             chat_id,
             report_text,
             parse_mode=ParseMode.HTML,

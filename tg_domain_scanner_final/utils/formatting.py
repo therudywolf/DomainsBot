@@ -152,6 +152,18 @@ def build_report(
     Returns:
         Отформатированный отчет в виде строки с HTML разметкой
     """
+    # Защита от неправильных типов данных
+    if not isinstance(ssl, dict):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"ssl должен быть словарем, получен {type(ssl)} для домена {domain}")
+        ssl = {}
+    if not isinstance(dns, dict):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"dns должен быть словарем, получен {type(dns)} для домена {domain}")
+        dns = {}
+    
     lines: List[str] = []
     
     # Заголовок с доменом

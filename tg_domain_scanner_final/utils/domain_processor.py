@@ -75,16 +75,24 @@ async def check_single_domain(
                 return_exceptions=True
             )
             
-            # Обрабатываем исключения
-            if isinstance(dns_info, Exception):
+            # Обрабатываем исключения (включая CancelledError, который является BaseException)
+            if isinstance(dns_info, BaseException):
                 logger.error(f"Ошибка DNS для {domain}: {dns_info}")
                 dns_info = {}
                 record_error("DNS_ERROR")
             
-            if isinstance(ssl_info, Exception):
+            if isinstance(ssl_info, BaseException):
                 logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
                 ssl_info = {}
                 record_error("SSL_ERROR")
+            
+            # Убеждаемся, что ssl_info и dns_info - это словари
+            if not isinstance(ssl_info, dict):
+                logger.warning(f"ssl_info для {domain} не является словарем: {type(ssl_info)}")
+                ssl_info = {}
+            if not isinstance(dns_info, dict):
+                logger.warning(f"dns_info для {domain} не является словарем: {type(dns_info)}")
+                dns_info = {}
             
             # Обрабатываем результат WAF (может быть кортеж или исключение)
             if isinstance(waf_result, Exception):
