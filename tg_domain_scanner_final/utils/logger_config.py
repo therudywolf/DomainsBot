@@ -72,4 +72,9 @@ def setup_logging(
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
     logging.getLogger("aiogram").setLevel(logging.INFO)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
+    
+    # Включаем DEBUG логирование для нашего бота при необходимости
+    # Можно переключить на INFO для продакшена
+    bot_logger = logging.getLogger("__main__")
+    bot_logger.setLevel(numeric_level)
 

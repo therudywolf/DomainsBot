@@ -630,6 +630,112 @@ def build_admin_keyboard() -> types.InlineKeyboardMarkup:
 
 router = Router()
 
+# ---------- Middleware для расширенного логирования ----------
+
+class LoggingMiddleware:
+    """Middleware для логирования всех обновлений и обработчиков."""
+    
+    async def __call__(
+        self,
+        handler,
+        event,
+        data
+    ):
+        """Обрабатывает событие с логированием."""
+        start_time = asyncio.get_event_loop().time()
+        event_type = type(event).__name__
+        
+        # Логируем входящее событие
+        if isinstance(event, types.Message):
+            user_id = event.from_user.id if event.from_user else None
+            username = event.from_user.username if event.from_user else None
+            chat_id = event.chat.id if event.chat else None
+            text_preview = (event.text or event.caption or "")[:100] if hasattr(event, 'text') or hasattr(event, 'caption') else ""
+            
+            logger.info(
+                f"📨 Входящее сообщение | "
+                f"user_id={user_id} (@{username}) | "
+                f"chat_id={chat_id} | "
+                f"text={text_preview} | "
+                f"message_id={event.message_id if hasattr(event, 'message_id') else 'N/A'}"
+            )
+        elif isinstance(event, types.CallbackQuery):
+            user_id = event.from_user.id if event.from_user else None
+            username = event.from_user.username if event.from_user else None
+            callback_data = event.data or "N/A"
+            
+            logger.info(
+                f"🔘 Callback query | "
+                f"user_id={user_id} (@{username}) | "
+                f"callback_data={callback_data} | "
+                f"message_id={event.message.message_id if event.message else 'N/A'}"
+            )
+        elif isinstance(event, types.InlineQuery):
+            user_id = event.from_user.id if event.from_user else None
+            query = (event.query or "")[:100]
+            
+            logger.info(
+                f"🔍 Inline query | "
+                f"user_id={user_id} | "
+                f"query={query}"
+            )
+        else:
+            logger.debug(f"📥 Событие {event_type} получено")
+        
+        try:
+            # Выполняем обработчик
+            result = await handler(event, data)
+            
+            # Логируем успешное выполнение
+            duration = asyncio.get_event_loop().time() - start_time
+            if duration > 1.0:  # Логируем только медленные обработчики
+                logger.warning(
+                    f"⏱️ Медленный обработчик | "
+                    f"event={event_type} | "
+                    f"duration={duration:.2f}s"
+                )
+            else:
+                logger.debug(
+                    f"✅ Обработчик выполнен | "
+                    f"event={event_type} | "
+                    f"duration={duration:.3f}s"
+                )
+            
+            return result
+            
+        except Exception as e:
+            # Логируем ошибку с полным контекстом
+            duration = asyncio.get_event_loop().time() - start_time
+            error_context = {
+                "event_type": event_type,
+                "duration": f"{duration:.3f}s",
+                "error": str(e),
+                "error_type": type(e).__name__,
+            }
+            
+            if isinstance(event, types.Message):
+                error_context["user_id"] = event.from_user.id if event.from_user else None
+                error_context["chat_id"] = event.chat.id if event.chat else None
+                error_context["text"] = (event.text or event.caption or "")[:200] if hasattr(event, 'text') or hasattr(event, 'caption') else ""
+            elif isinstance(event, types.CallbackQuery):
+                error_context["user_id"] = event.from_user.id if event.from_user else None
+                error_context["callback_data"] = event.data or "N/A"
+            
+            logger.error(
+                f"❌ Ошибка в обработчике | "
+                f"{json.dumps(error_context, ensure_ascii=False)}",
+                exc_info=True
+            )
+            
+            # Пробрасываем исключение дальше
+            raise
+
+
+# Регистрируем middleware
+router.message.middleware(LoggingMiddleware())
+router.callback_query.middleware(LoggingMiddleware())
+router.inline_query.middleware(LoggingMiddleware())
+
 # ---------- Основная проверка доступа ----------
 
 async def check_access(message: types.Message) -> bool:
@@ -681,15 +787,29 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         state: Состояние FSM
         raw_text: Текст с доменами для обработки
     """
+    start_time = asyncio.get_event_loop().time()
     user_id = message.from_user.id
+    
+    logger.info(
+        f"🔍 Начало обработки доменов | "
+        f"user_id={user_id} | "
+        f"text_length={len(raw_text)} | "
+        f"chat_id={message.chat.id}"
+    )
     
     # Проверка доступа
     if not await check_access(message):
+        logger.warning(f"❌ Доступ запрещен для user_id={user_id} при обработке доменов")
         return
     
     # Проверка rate limit
     if not await check_rate_limit(user_id):
         remaining = await get_remaining_requests(user_id)
+        logger.warning(
+            f"⏱️ Rate limit превышен | "
+            f"user_id={user_id} | "
+            f"remaining={remaining}"
+        )
         await safe_send_text(
             message.bot,
             message.chat.id,
@@ -699,7 +819,15 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         return
     
     # Валидация и нормализация доменов
+    logger.debug(f"Валидация и нормализация доменов для user_id={user_id}")
     domains, bad = validate_and_normalize_domains(raw_text)
+    
+    logger.info(
+        f"📋 Домены обработаны | "
+        f"user_id={user_id} | "
+        f"valid={len(domains)} | "
+        f"invalid={len(bad)}"
+    )
 
     # Проверка на пустой список
     if not domains:
@@ -748,11 +876,22 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     last_edit = start_ts - MIN_EDIT_INTERVAL
     progress_msg: types.Message | None = None
 
+    logger.debug(f"Ожидание завершения {total} задач проверки доменов")
+    
     for coro in asyncio.as_completed(tasks):
-        line, row = await coro
-        reports.append(line)
-        collected.append(row)
-        done += 1
+        try:
+            line, row = await coro
+            reports.append(line)
+            collected.append(row)
+            done += 1
+        except Exception as e:
+            logger.error(
+                f"❌ Ошибка при проверке домена | "
+                f"user_id={user_id} | "
+                f"error={type(e).__name__}: {str(e)}",
+                exc_info=True
+            )
+            done += 1
 
         now = loop.time()
         need_update = total >= 4 and (done == total or now - last_edit >= MIN_EDIT_INTERVAL)
@@ -775,15 +914,27 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     if bad:
         reports.append("🔸 Игнорированы некорректные строки: " + ", ".join(bad))
 
+    total_duration = asyncio.get_event_loop().time() - start_time
+    logger.info(
+        f"✅ Все домены проверены | "
+        f"user_id={user_id} | "
+        f"total={total} | "
+        f"duration={total_duration:.2f}s | "
+        f"avg_per_domain={total_duration/total:.2f}s"
+    )
+
     # ---------- Формирование вывода ----------
     if total >= 4:
+        logger.debug(f"Отправка CSV отчета для {total} доменов")
         # CSV отчет для множественных доменов
         csv_bytes = format_csv_report(collected, brief)
         await message.answer_document(
             types.BufferedInputFile(csv_bytes, filename="report.csv"),
             caption=f"✔️ Проверено {total} доменов.",
         )
+        logger.info(f"CSV отчет отправлен для user_id={user_id}, доменов={total}")
     else:
+        logger.debug(f"Отправка отдельных отчетов для {total} доменов")
         # Отдельные отчеты для каждого домена
         has_waf_perm = has_permission(user_id, "check_domains")
         await send_domain_reports(
@@ -795,6 +946,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
             has_waf_perm,
             brief
         )
+        logger.info(f"Отчеты отправлены для user_id={user_id}, доменов={total}")
 
 
 # ---------- Команды ----------
@@ -1207,45 +1359,122 @@ async def cmd_history(message: types.Message):
 @router.callback_query(F.data.in_({"mode_full", "mode_brief"}))
 async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
     """Переключает режим отчета (расширенный/короткий)."""
+    start_time = asyncio.get_event_loop().time()
     user_id = callback.from_user.id
+    callback_data = callback.data
+    
+    logger.info(
+        f"🔄 Переключение режима | "
+        f"user_id={user_id} | "
+        f"callback_data={callback_data}"
+    )
     
     # Проверка доступа
     if not has_access(user_id):
+        logger.warning(f"❌ Доступ запрещен для user_id={user_id} при переключении режима")
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
     # Проверка разрешения на настройки
     if not has_permission(user_id, "settings"):
+        logger.warning(f"❌ Нет разрешения на настройки для user_id={user_id} при переключении режима")
         await callback.answer("❌ Нет доступа к настройкам", show_alert=True)
         return
     
     new_mode = "full" if callback.data == "mode_full" else "brief"
+    logger.debug(f"Установка режима {new_mode} для user_id={user_id}")
+    
     await state.update_data(view_mode=new_mode)
     set_mode(user_id, new_mode)
 
     await callback.answer(
         f"Режим установлен: {'Расширенный' if new_mode == 'full' else 'Короткий'}"
     )
+    
+    logger.debug(f"Режим {new_mode} установлен для user_id={user_id}")
 
-    # Пытаемся найти домен в сообщении и перепроверить
+    # Пытаемся найти домен и обновить отчет
     try:
         message_text = callback.message.text or callback.message.caption or ""
+        domain = None
         
-        # Ищем домен в сообщении (первая строка обычно содержит домен)
+        logger.debug(f"Поиск домена в сообщении для user_id={user_id}, режим={new_mode}")
+        
+        # Способ 1: Ищем домен в тексте сообщения
         import re
         domain_match = re.search(r'🌐 <b>([^<]+)</b>', message_text)
-        
         if domain_match:
             domain = domain_match.group(1)
-            # Перепроверяем домен с новым режимом
-            await _recheck_domain(callback.message, state, domain, new_mode)
+            logger.debug(f"Домен найден в тексте: {domain}")
+        
+        # Способ 2: Ищем домен в callback_data кнопок клавиатуры
+        if not domain and callback.message.reply_markup and callback.message.reply_markup.inline_keyboard:
+            logger.debug("Поиск домена в клавиатуре...")
+            for row in callback.message.reply_markup.inline_keyboard:
+                for button in row:
+                    if button.callback_data:
+                        # Ищем в любых кнопках, связанных с доменом
+                        if "recheck_" in button.callback_data:
+                            domain = button.callback_data.replace("recheck_", "")
+                            break
+                        elif "quick_waf_" in button.callback_data:
+                            domain = button.callback_data.replace("quick_waf_", "")
+                            break
+                        elif "quick_certs_" in button.callback_data:
+                            domain = button.callback_data.replace("quick_certs_", "")
+                            break
+                        elif "detail_dns_" in button.callback_data:
+                            domain = button.callback_data.replace("detail_dns_", "")
+                            break
+                        elif "detail_ssl_" in button.callback_data:
+                            domain = button.callback_data.replace("detail_ssl_", "")
+                            break
+                        elif "detail_waf_" in button.callback_data:
+                            domain = button.callback_data.replace("detail_waf_", "")
+                            break
+                if domain:
+                    break
+        
+        # Если нашли домен, обновляем отчет
+        if domain:
+            logger.info(f"Обновление отчета для домена {domain} с режимом {new_mode}")
+            try:
+                # Перепроверяем домен с новым режимом
+                # Это гарантирует, что отчет будет обновлен с актуальными данными
+                await _recheck_domain(callback.message, state, domain, new_mode)
+                duration = asyncio.get_event_loop().time() - start_time
+                logger.info(f"✅ Отчет обновлен для {domain} за {duration:.2f}s")
+            except Exception as e:
+                duration = asyncio.get_event_loop().time() - start_time
+                logger.error(
+                    f"❌ Ошибка при обновлении отчета для {domain} | "
+                    f"user_id={user_id} | "
+                    f"режим={new_mode} | "
+                    f"duration={duration:.2f}s | "
+                    f"error={type(e).__name__}: {str(e)}",
+                    exc_info=True
+                )
+                # Если не удалось обновить отчет, хотя бы обновляем клавиатуру
+                try:
+                    has_waf_perm = has_permission(user_id, "check_domains")
+                    keyboard = build_report_keyboard(domain, new_mode, user_id, has_waf_perm)
+                    await callback.message.edit_reply_markup(reply_markup=keyboard)
+                except Exception as e2:
+                    logger.error(f"Ошибка при обновлении клавиатуры: {e2}")
+                    pass
         else:
-            # Просто обновляем клавиатуру
-            await callback.message.edit_reply_markup(reply_markup=build_mode_keyboard(new_mode))
+            # Если это не отчет о домене (например, настройки), просто обновляем клавиатуру
+            if callback.message.reply_markup:
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=build_mode_keyboard(new_mode))
+                except Exception:
+                    pass
     except Exception as e:
-        logger.error(f"Ошибка при обновлении режима: {e}")
+        logger.error(f"Ошибка при обновлении режима: {e}", exc_info=True)
+        # Пытаемся хотя бы обновить клавиатуру
         try:
-            await callback.message.edit_reply_markup(reply_markup=build_mode_keyboard(new_mode))
+            if callback.message.reply_markup:
+                await callback.message.edit_reply_markup(reply_markup=build_mode_keyboard(new_mode))
         except Exception:
             pass
 
@@ -1297,7 +1526,15 @@ async def _recheck_domain(
         domain: Домен для перепроверки
         mode: Режим отчета (если None, берется из state)
     """
+    start_time = asyncio.get_event_loop().time()
     user_id = message.from_user.id
+    
+    logger.info(
+        f"🔄 Перепроверка домена | "
+        f"user_id={user_id} | "
+        f"domain={domain} | "
+        f"mode={mode}"
+    )
     
     if mode is None:
         mode = (await state.get_data()).get("view_mode", DEFAULT_MODE)
@@ -1306,9 +1543,13 @@ async def _recheck_domain(
     
     try:
         # Обновляем сообщение
+        logger.debug(f"Обновление сообщения для домена {domain}")
         await message.edit_text("⏳ Перепроверяю домен...", parse_mode=ParseMode.HTML)
         
         # Получаем данные
+        check_start = asyncio.get_event_loop().time()
+        logger.debug(f"Начало проверки домена {domain}")
+        
         dns_info, ssl_info, waf_result = await asyncio.gather(
             fetch_dns(domain, settings.DNS_TIMEOUT),
             fetch_ssl(domain),
@@ -1316,12 +1557,29 @@ async def _recheck_domain(
             return_exceptions=True
         )
         
+        check_duration = asyncio.get_event_loop().time() - check_start
+        logger.info(
+            f"✅ Проверка домена завершена | "
+            f"domain={domain} | "
+            f"duration={check_duration:.2f}s"
+        )
+        
         # Обрабатываем исключения
         if isinstance(dns_info, Exception):
-            logger.error(f"Ошибка DNS для {domain}: {dns_info}")
+            logger.error(
+                f"❌ Ошибка DNS для {domain} | "
+                f"user_id={user_id} | "
+                f"error={type(dns_info).__name__}: {str(dns_info)}",
+                exc_info=True
+            )
             dns_info = {}
         if isinstance(ssl_info, Exception):
-            logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
+            logger.error(
+                f"❌ Ошибка SSL для {domain} | "
+                f"user_id={user_id} | "
+                f"error={type(ssl_info).__name__}: {str(ssl_info)}",
+                exc_info=True
+            )
             ssl_info = {}
         
         # Обрабатываем результат WAF
@@ -1336,17 +1594,27 @@ async def _recheck_domain(
             waf_method = None
         
         # Формируем отчет
-        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief)
+        report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
         
         # Создаем клавиатуру
         has_waf_perm = has_permission(user_id, "check_domains")
         keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
         
         # Обновляем сообщение
+        logger.debug(f"Обновление отчета для домена {domain}")
         await message.edit_text(
             report_text,
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
+        )
+        
+        total_duration = asyncio.get_event_loop().time() - start_time
+        logger.info(
+            f"✅ Отчет обновлен | "
+            f"domain={domain} | "
+            f"user_id={user_id} | "
+            f"mode={mode} | "
+            f"total_duration={total_duration:.2f}s"
         )
         
         # Сохраняем в историю
@@ -1354,14 +1622,28 @@ async def _recheck_domain(
             try:
                 add_check_result(domain, user_id, dns_info, ssl_info, waf_enabled, waf_method)
             except Exception as e:
-                logger.warning(f"Ошибка при сохранении в историю: {e}")
+                logger.warning(
+                    f"⚠️ Ошибка при сохранении в историю | "
+                    f"domain={domain} | "
+                    f"user_id={user_id} | "
+                    f"error={type(e).__name__}: {str(e)}"
+                )
         
         # Записываем статистику
         if settings.STATS_ENABLED:
             record_domain_check(domain, user_id)
             
     except Exception as e:
-        logger.error(f"Ошибка при перепроверке домена {domain}: {e}", exc_info=True)
+        duration = asyncio.get_event_loop().time() - start_time
+        logger.error(
+            f"❌ Критическая ошибка при перепроверке домена | "
+            f"domain={domain} | "
+            f"user_id={user_id} | "
+            f"mode={mode} | "
+            f"duration={duration:.2f}s | "
+            f"error={type(e).__name__}: {str(e)}",
+            exc_info=True
+        )
         await message.edit_text(
             f"❌ Ошибка при перепроверке домена {domain}:\n{type(e).__name__}",
             parse_mode=ParseMode.HTML
@@ -1371,21 +1653,51 @@ async def _recheck_domain(
 @router.callback_query(F.data.startswith("recheck_"))
 async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
     """Быстрая перепроверка домена."""
+    start_time = asyncio.get_event_loop().time()
     user_id = callback.from_user.id
     
+    logger.info(
+        f"🔄 Запрос на перепроверку домена | "
+        f"user_id={user_id} | "
+        f"callback_data={callback.data}"
+    )
+    
     if not has_access(user_id):
+        logger.warning(f"❌ Доступ запрещен для user_id={user_id} при перепроверке")
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
     if not has_permission(user_id, "check_domains"):
+        logger.warning(f"❌ Нет разрешения на проверку доменов для user_id={user_id}")
         await callback.answer("❌ Нет доступа к проверке доменов", show_alert=True)
         return
     
     # Извлекаем домен из callback_data
     domain = callback.data.replace("recheck_", "")
+    logger.debug(f"Перепроверка домена {domain} для user_id={user_id}")
     
     await callback.answer("🔄 Перепроверяю домен...")
-    await _recheck_domain(callback.message, state, domain)
+    
+    try:
+        await _recheck_domain(callback.message, state, domain)
+        duration = asyncio.get_event_loop().time() - start_time
+        logger.info(
+            f"✅ Перепроверка завершена | "
+            f"domain={domain} | "
+            f"user_id={user_id} | "
+            f"duration={duration:.2f}s"
+        )
+    except Exception as e:
+        duration = asyncio.get_event_loop().time() - start_time
+        logger.error(
+            f"❌ Ошибка при перепроверке | "
+            f"domain={domain} | "
+            f"user_id={user_id} | "
+            f"duration={duration:.2f}s | "
+            f"error={type(e).__name__}: {str(e)}",
+            exc_info=True
+        )
+        await callback.answer("❌ Ошибка при перепроверке домена", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("quick_waf_"))
@@ -1532,6 +1844,282 @@ async def quick_certs_check(callback: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Ошибка при проверке сертификатов для {domain}: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при проверке сертификатов", show_alert=True)
+
+
+# ---------- Детальный просмотр блоков ----------
+
+@router.callback_query(F.data.startswith("detail_dns_"))
+async def show_dns_details(callback: types.CallbackQuery):
+    """Показывает детальную информацию о DNS записях."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Извлекаем домен
+    domain = callback.data.replace("detail_dns_", "")
+    
+    await callback.answer("📡 Загружаю DNS записи...")
+    
+    try:
+        # Получаем DNS информацию
+        dns_info = await fetch_dns(domain, settings.DNS_TIMEOUT)
+        
+        # Формируем детальный отчет
+        lines = [f"📡 <b>Детальная информация DNS для {domain}</b>\n"]
+        
+        # IP адреса
+        ip_list = dns_info.get("IP", []) or dns_info.get("A", [])
+        if ip_list:
+            lines.append(f"<b>IP адреса ({len(ip_list)}):</b>")
+            for ip in ip_list:
+                lines.append(f"  • {ip}")
+        else:
+            lines.append("<b>IP адреса:</b> —")
+        
+        lines.append("")
+        
+        # A записи
+        a_records = dns_info.get("A", [])
+        if a_records:
+            lines.append(f"<b>A записи ({len(a_records)}):</b>")
+            for a in a_records:
+                lines.append(f"  • {a}")
+        else:
+            lines.append("<b>A записи:</b> —")
+        
+        lines.append("")
+        
+        # AAAA записи
+        aaaa_records = dns_info.get("AAAA", [])
+        if aaaa_records:
+            lines.append(f"<b>AAAA записи ({len(aaaa_records)}):</b>")
+            for aaaa in aaaa_records:
+                lines.append(f"  • {aaaa}")
+        else:
+            lines.append("<b>AAAA записи:</b> —")
+        
+        lines.append("")
+        
+        # MX записи
+        mx_records = dns_info.get("MX", [])
+        if mx_records:
+            lines.append(f"<b>MX записи ({len(mx_records)}):</b>")
+            for mx in mx_records:
+                lines.append(f"  • {mx}")
+        else:
+            lines.append("<b>MX записи:</b> —")
+        
+        lines.append("")
+        
+        # NS записи
+        ns_records = dns_info.get("NS", [])
+        if ns_records:
+            lines.append(f"<b>NS записи ({len(ns_records)}):</b>")
+            for ns in ns_records:
+                lines.append(f"  • {ns}")
+        else:
+            lines.append("<b>NS записи:</b> —")
+        
+        detail_text = "\n".join(lines)
+        
+        # Создаем клавиатуру для возврата
+        from utils.formatting import build_report_keyboard
+        mode = "full"  # Используем полный режим для деталей
+        has_waf_perm = has_permission(user_id, "check_domains")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        
+        await callback.message.edit_text(
+            detail_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении DNS деталей для {domain}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при получении DNS информации", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("detail_ssl_"))
+async def show_ssl_details(callback: types.CallbackQuery):
+    """Показывает детальную информацию о SSL сертификатах."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Извлекаем домен
+    domain = callback.data.replace("detail_ssl_", "")
+    
+    await callback.answer("🔒 Загружаю информацию о сертификатах...")
+    
+    try:
+        # Получаем SSL информацию
+        ssl_info = await fetch_ssl(domain)
+        
+        # Формируем детальный отчет
+        lines = [f"🔒 <b>Детальная информация SSL для {domain}</b>\n"]
+        
+        # Обычный сертификат
+        lines.append("<b>📋 Обычный SSL сертификат</b>")
+        lines.append("")
+        
+        cn = ssl_info.get('CN', '—')
+        lines.append(f"<b>Common Name (CN):</b> {cn if cn != '—' else '—'}")
+        
+        san = ssl_info.get('SAN', [])
+        if san:
+            lines.append(f"<b>Subject Alternative Names ({len(san)}):</b>")
+            for san_item in san:
+                lines.append(f"  • {san_item}")
+        else:
+            lines.append("<b>Subject Alternative Names:</b> —")
+        
+        lines.append("")
+        
+        issuer = ssl_info.get('Issuer', '—')
+        if issuer and issuer != "—":
+            # Упрощаем issuer
+            issuer_short = issuer.split(',')[0] if ',' in issuer else issuer
+            lines.append(f"<b>Издатель:</b> {issuer_short}")
+        
+        sig_alg = ssl_info.get('SigAlg', '—')
+        if sig_alg and sig_alg != "—":
+            lines.append(f"<b>Алгоритм подписи:</b> {sig_alg}")
+        
+        cipher = ssl_info.get('Cipher', '—')
+        if cipher and cipher != "—":
+            lines.append(f"<b>Используемый шифр:</b> {cipher}")
+        
+        lines.append("")
+        
+        # Даты обычного сертификата
+        not_before = ssl_info.get('NotBefore')
+        not_after = ssl_info.get('NotAfter')
+        if not_before:
+            from utils.formatting import _format_date
+            lines.append(f"<b>Действителен с:</b> {_format_date(not_before)}")
+        if not_after:
+            from utils.formatting import _format_date_with_days_left
+            lines.append(f"<b>Действителен до:</b> {_format_date_with_days_left(not_after)}")
+        
+        lines.append("")
+        lines.append("")
+        
+        # GOST сертификат
+        lines.append("<b>🔐 GOST TLS сертификат</b>")
+        lines.append("")
+        
+        gost_enabled = ssl_info.get('gost', False) or ssl_info.get('IsGOST', False)
+        if gost_enabled:
+            lines.append("✅ <b>GOST сертификат обнаружен</b>")
+            lines.append("")
+            
+            gost_not_before = ssl_info.get('GostNotBefore')
+            gost_not_after = ssl_info.get('GostNotAfter')
+            
+            if gost_not_before:
+                from utils.formatting import _format_date
+                lines.append(f"<b>Действителен с:</b> {_format_date(gost_not_before)}")
+            if gost_not_after:
+                from utils.formatting import _format_date_with_days_left
+                lines.append(f"<b>Действителен до:</b> {_format_date_with_days_left(gost_not_after)}")
+        else:
+            lines.append("❌ <b>GOST сертификат не обнаружен</b>")
+        
+        detail_text = "\n".join(lines)
+        
+        # Создаем клавиатуру для возврата
+        from utils.formatting import build_report_keyboard
+        mode = "full"  # Используем полный режим для деталей
+        has_waf_perm = has_permission(user_id, "check_domains")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        
+        await callback.message.edit_text(
+            detail_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении SSL деталей для {domain}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при получении SSL информации", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("detail_waf_"))
+async def show_waf_details(callback: types.CallbackQuery):
+    """Показывает детальную информацию о WAF."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    if not has_permission(user_id, "check_domains"):
+        await callback.answer("❌ Нет доступа к проверке WAF", show_alert=True)
+        return
+    
+    # Извлекаем домен
+    domain = callback.data.replace("detail_waf_", "")
+    
+    await callback.answer("🛡️ Проверяю WAF...")
+    
+    try:
+        # Выполняем проверку WAF
+        waf_result = await test_waf(domain, user_id=user_id)
+        
+        # Обрабатываем результат
+        if isinstance(waf_result, tuple) and len(waf_result) == 2:
+            waf_enabled, waf_method = waf_result
+        else:
+            waf_enabled = bool(waf_result)
+            waf_method = None
+        
+        # Формируем детальный отчет
+        lines = [f"🛡️ <b>Детальная информация WAF для {domain}</b>\n"]
+        lines.append("")
+        
+        if waf_enabled:
+            lines.append("✅ <b>WAF обнаружен</b>")
+        else:
+            lines.append("❌ <b>WAF не обнаружен</b>")
+        
+        lines.append("")
+        
+        # Информация о методе проверки
+        if waf_method:
+            method_names = {
+                "policy": "Check Policy (/?monitoring=test_query_for_policy)",
+                "light": "Легкая проверка (анализ заголовков и статусов)",
+                "injection": "Проверка через инъекции (SQL, XSS, Path Traversal)",
+            }
+            method_name = method_names.get(waf_method, waf_method)
+            lines.append(f"<b>Метод проверки:</b> {method_name}")
+        else:
+            lines.append("<b>Метод проверки:</b> Не указан")
+        
+        lines.append("")
+        lines.append("<i>💡 Для дополнительной проверки используйте кнопку '🛡️ Проверить WAF' в основном отчете.</i>")
+        
+        detail_text = "\n".join(lines)
+        
+        # Создаем клавиатуру для возврата
+        from utils.formatting import build_report_keyboard
+        mode = "full"  # Используем полный режим для деталей
+        has_waf_perm = has_permission(user_id, "check_domains")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        
+        await callback.message.edit_text(
+            detail_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении WAF деталей для {domain}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при проверке WAF", show_alert=True)
 
 
 # ---------- МОНИТОРИНГ ДОМЕНОВ ----------
@@ -2675,6 +3263,36 @@ async def admin_stats_callback(callback: types.CallbackQuery):
     await callback.answer()
 
 
+# ---------- Обработчик необработанных callback_query ----------
+# Должен быть зарегистрирован ПОСЛЕДНИМ, чтобы не перехватывать специфические обработчики
+
+@router.callback_query()
+async def handle_unhandled_callback(callback: types.CallbackQuery):
+    """Обрабатывает все callback query, которые не были обработаны другими обработчиками."""
+    user_id = callback.from_user.id
+    callback_data = callback.data or "N/A"
+    message_id = callback.message.message_id if callback.message else "N/A"
+    
+    logger.warning(
+        f"⚠️ Необработанный callback query | "
+        f"user_id={user_id} | "
+        f"callback_data={callback_data} | "
+        f"message_id={message_id} | "
+        f"chat_id={callback.message.chat.id if callback.message else 'N/A'}"
+    )
+    
+    try:
+        await callback.answer("❓ Неизвестная команда", show_alert=False)
+    except Exception as e:
+        logger.error(
+            f"❌ Ошибка при ответе на необработанный callback | "
+            f"user_id={user_id} | "
+            f"callback_data={callback_data} | "
+            f"error={type(e).__name__}: {str(e)}",
+            exc_info=True
+        )
+
+
 # ---------- Загрузка TXT ----------
 
 @router.message(F.document)
@@ -2782,18 +3400,28 @@ async def handle_text(message: types.Message, state: FSMContext):
     
     Также автоматически регистрирует чат, если сообщение пришло из группы/канала.
     """
+    start_time = asyncio.get_event_loop().time()
     user_id = message.from_user.id
+    text = (message.text or "").strip()
+    
+    logger.info(
+        f"📝 Обработка текстового сообщения | "
+        f"user_id={user_id} | "
+        f"chat_id={message.chat.id} | "
+        f"text_length={len(text)} | "
+        f"text_preview={text[:100]}"
+    )
     
     # Регистрируем чат, если сообщение пришло не из личных сообщений
     if message.chat.id != user_id:
         chat_title = message.chat.title or f"Chat {message.chat.id}"
         chat_type = message.chat.type
         register_chat(user_id, message.chat.id, chat_title, chat_type)
-    
-    text = (message.text or "").strip()
+        logger.debug(f"Чат зарегистрирован: {chat_title} (ID: {message.chat.id})")
     
     # Проверка доступа
     if not await check_access(message):
+        logger.warning(f"❌ Доступ запрещен для user_id={user_id}")
         return
     
     # Обработка команд через кнопки меню
@@ -2870,7 +3498,25 @@ async def handle_text(message: types.Message, state: FSMContext):
     
     # Если это не команда меню, обрабатываем как домены
     if text:
-        await _process_domains(message, state, text)
+        logger.debug(f"Обработка доменов из текста для user_id={user_id}")
+        try:
+            await _process_domains(message, state, text)
+            duration = asyncio.get_event_loop().time() - start_time
+            logger.info(
+                f"✅ Обработка доменов завершена | "
+                f"user_id={user_id} | "
+                f"duration={duration:.2f}s"
+            )
+        except Exception as e:
+            duration = asyncio.get_event_loop().time() - start_time
+            logger.error(
+                f"❌ Ошибка при обработке доменов | "
+                f"user_id={user_id} | "
+                f"duration={duration:.2f}s | "
+                f"error={type(e).__name__}: {str(e)}",
+                exc_info=True
+            )
+            raise
 
 
 # ---------- Запуск ----------
@@ -3012,15 +3658,23 @@ async def main():
     
     try:
         logger.info("Бот запущен и готов к работе")
+        logger.info(f"Обработчики зарегистрированы: {len(router.sub_routers)} роутеров")
         
         # Запускаем polling
+        logger.info("Начало polling...")
         await dp.start_polling(
             bot,
             allowed_updates=dp.resolve_used_update_types(),
             close_bot_session=True
         )
+    except asyncio.CancelledError:
+        logger.info("Polling отменен (graceful shutdown)")
     except Exception as e:
-        logger.error(f"Критическая ошибка при работе бота: {e}", exc_info=True)
+        logger.critical(
+            f"❌ Критическая ошибка при работе бота | "
+            f"error={type(e).__name__}: {str(e)}",
+            exc_info=True
+        )
         record_error("BOT_CRITICAL_ERROR")
     finally:
         # Ожидаем завершения периодической очистки
