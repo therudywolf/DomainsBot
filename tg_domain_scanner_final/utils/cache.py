@@ -158,19 +158,19 @@ async def _write_to_shelve(key: str, value: Any, ttl: int, maxsize: int) -> bool
                         for k, _ in items[:len(items) - maxsize]:
                             db.pop(k, None)
             return True
-            except Exception as e:
-                if attempt < MAX_RETRIES - 1:
-                    logger.debug(
-                        f"Ошибка при записи кэша (попытка {attempt + 1}/{MAX_RETRIES}): {e}"
-                    )
-                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
-                else:
-                    logger.warning(
-                        f"Не удалось записать кэш после {MAX_RETRIES} попыток для ключа {key[:50]}: {e}",
-                        exc_info=True
-                    )
-                    _cache_stats["errors"] += 1
-                    return False
+        except Exception as e:
+            if attempt < MAX_RETRIES - 1:
+                logger.debug(
+                    f"Ошибка при записи кэша (попытка {attempt + 1}/{MAX_RETRIES}): {e}"
+                )
+                await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+            else:
+                logger.warning(
+                    f"Не удалось записать кэш после {MAX_RETRIES} попыток для ключа {key[:50]}: {e}",
+                    exc_info=True
+                )
+                _cache_stats["errors"] += 1
+                return False
     return False
 
 
