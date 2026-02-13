@@ -1,0 +1,47 @@
+# Временные файлы сборки и экспорта
+export/
+bottgdomains-offline-*.tar.gz
+bottgdomains-offline-*.tar
+bottgdomains-offline-*.sha256
+*.tar.gz
+*.tar
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.local
+.venv
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+data/bot.log*
+
+# Docker
+.dockerignore
+
+# OS
+Thumbs.db
+.DS_Store
