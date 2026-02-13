@@ -56,17 +56,51 @@ echo ""
 # Получаем имена образов из docker-compose
 echo "💾 Шаг 3: Экспорт Docker образов..."
 
-# Получаем имя проекта из docker-compose
+# Получаем имя проекта из docker-compose (используем имя директории или из переменной окружения)
 PROJECT_NAME=$(basename "$PROJECT_ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
+# Также проверяем переменную окружения COMPOSE_PROJECT_NAME
+if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+    PROJECT_NAME=$(echo "$COMPOSE_PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
+fi
+
+# Если имя проекта пустое или слишком короткое, используем дефолтное
+if [ -z "$PROJECT_NAME" ] || [ ${#PROJECT_NAME} -lt 3 ]; then
+    PROJECT_NAME="bottgdomains"
+fi
+
+echo "   Имя проекта Docker Compose: $PROJECT_NAME"
+echo ""
 
 # Экспортируем образы
 echo "  - Экспорт образа gostsslcheck..."
-# Используем docker images для получения имени образа, а не SHA256
-GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" bottgdomains-gostsslcheck* | head -1)
+# Пробуем разные варианты имен образов
+GOST_IMAGE=""
+# Вариант 1: имя проекта + сервис (стандартный формат Docker Compose)
+GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^${PROJECT_NAME}-gostsslcheck[0-9]*:" | head -1)
+# Вариант 2: bottgdomains-* (старое имя)
+if [ -z "$GOST_IMAGE" ]; then
+    GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^bottgdomains-gostsslcheck[0-9]*:" | head -1)
+fi
+# Вариант 3: просто gostsslcheck* (если образ был собран напрямую)
+if [ -z "$GOST_IMAGE" ]; then
+    GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^gostsslcheck[0-9]*:" | head -1)
+fi
+# Вариант 4: любой образ содержащий gostsslcheck
+if [ -z "$GOST_IMAGE" ]; then
+    GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -i "gostsslcheck" | grep -v "<none>" | head -1)
+fi
+
 if [ -z "$GOST_IMAGE" ]; then
     echo "❌ Ошибка: Образ gostsslcheck не найден"
+    echo "   Искали образы с именами:"
+    echo "     - ${PROJECT_NAME}-gostsslcheck*"
+    echo "     - bottgdomains-gostsslcheck*"
+    echo "     - gostsslcheck*"
+    echo ""
     echo "   Доступные образы:"
-    docker images | grep gostsslcheck || echo "   (нет образов gostsslcheck)"
+    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}" | head -10
+    echo ""
+    echo "   Попробуйте собрать образы: $DOCKER_COMPOSE build"
     exit 1
 fi
 echo "   Найден образ: $GOST_IMAGE"
@@ -75,15 +109,38 @@ if [ ! -f "$EXPORT_DIR/images/gostsslcheck.tar" ]; then
     echo "❌ Ошибка: Не удалось создать gostsslcheck.tar"
     exit 1
 fi
-echo "    ✅ gostsslcheck.tar сохранен"
+GOST_SIZE=$(du -h "$EXPORT_DIR/images/gostsslcheck.tar" | cut -f1)
+echo "    ✅ gostsslcheck.tar сохранен (размер: $GOST_SIZE)"
 
 echo "  - Экспорт образа tgscanner..."
-# Используем docker images для получения имени образа, а не SHA256
-TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" bottgdomains-tgscanner* | head -1)
+# Пробуем разные варианты имен образов
+TGSCANNER_IMAGE=""
+# Вариант 1: имя проекта + сервис
+TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^${PROJECT_NAME}-tgscanner:" | head -1)
+# Вариант 2: bottgdomains-*
+if [ -z "$TGSCANNER_IMAGE" ]; then
+    TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^bottgdomains-tgscanner:" | head -1)
+fi
+# Вариант 3: просто tgscanner
+if [ -z "$TGSCANNER_IMAGE" ]; then
+    TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^tgscanner:" | head -1)
+fi
+# Вариант 4: любой образ содержащий tgscanner
+if [ -z "$TGSCANNER_IMAGE" ]; then
+    TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -i "tgscanner" | grep -v "<none>" | head -1)
+fi
+
 if [ -z "$TGSCANNER_IMAGE" ]; then
     echo "❌ Ошибка: Образ tgscanner не найден"
+    echo "   Искали образы с именами:"
+    echo "     - ${PROJECT_NAME}-tgscanner*"
+    echo "     - bottgdomains-tgscanner*"
+    echo "     - tgscanner*"
+    echo ""
     echo "   Доступные образы:"
-    docker images | grep tgscanner || echo "   (нет образов tgscanner)"
+    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}" | head -10
+    echo ""
+    echo "   Попробуйте собрать образы: $DOCKER_COMPOSE build"
     exit 1
 fi
 echo "   Найден образ: $TGSCANNER_IMAGE"
@@ -92,11 +149,8 @@ if [ ! -f "$EXPORT_DIR/images/tgscanner.tar" ]; then
     echo "❌ Ошибка: Не удалось создать tgscanner.tar"
     exit 1
 fi
-echo "    ✅ tgscanner.tar сохранен"
-
-# Проверяем размеры файлов
-GOST_SIZE=$(du -h "$EXPORT_DIR/images/gostsslcheck.tar" | cut -f1)
 TGSCANNER_SIZE=$(du -h "$EXPORT_DIR/images/tgscanner.tar" | cut -f1)
+echo "    ✅ tgscanner.tar сохранен (размер: $TGSCANNER_SIZE)"
 
 echo ""
 echo "📊 Размеры экспортированных образов:"
@@ -112,9 +166,11 @@ cp docker-compose.yml "$EXPORT_DIR/project/"
 cp -r tg_domain_scanner_final "$EXPORT_DIR/project/"
 cp -r GostSSLCheck "$EXPORT_DIR/project/"
 
-# Копируем скрипт развертывания
-cp scripts/deploy.sh "$EXPORT_DIR/project/"
-chmod +x "$EXPORT_DIR/project/deploy.sh"
+# Копируем скрипты развертывания
+if [ -f "scripts/deploy.sh" ]; then
+    cp scripts/deploy.sh "$EXPORT_DIR/project/"
+    chmod +x "$EXPORT_DIR/project/deploy.sh"
+fi
 
 # Копируем документацию
 if [ -f "DEPLOYMENT_OFFLINE.md" ]; then
@@ -122,6 +178,9 @@ if [ -f "DEPLOYMENT_OFFLINE.md" ]; then
 fi
 if [ -f "README.md" ]; then
     cp README.md "$EXPORT_DIR/project/"
+fi
+if [ -f "QUICKSTART.md" ]; then
+    cp QUICKSTART.md "$EXPORT_DIR/project/"
 fi
 
 # Копируем .env.example если есть

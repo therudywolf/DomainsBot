@@ -113,7 +113,6 @@ fi
 # Создаем docker-compose.override.yml для использования уже загруженных образов
 echo "📝 Создание docker-compose.override.yml для offline развертывания..."
 cat > docker-compose.override.yml << 'EOF'
-version: '3'
 services:
   gostsslcheck1:
     image: bottgdomains-gostsslcheck1:latest

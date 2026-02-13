@@ -79,31 +79,64 @@ echo.
 REM Экспорт образов
 echo [3/6] Экспорт Docker образов...
 
+REM Получаем имя проекта из имени директории
+set PROJECT_NAME=%CD%
+for %%F in ("%PROJECT_NAME%") do set PROJECT_NAME=%%~nxF
+REM Переводим в нижний регистр и убираем спецсимволы
+set PROJECT_NAME=%PROJECT_NAME: =%
+set PROJECT_NAME=%PROJECT_NAME:~0,20%
+
 REM Получаем имя образа gostsslcheck
 REM Docker Compose создает образы с именем проекта-сервис:latest
 echo   - Поиск образа gostsslcheck...
 set GOST_IMAGE=
-REM Используем docker images с фильтром и берем первый результат
-REM Создаем временный файл для надежного парсинга
-echo [DEBUG] Выполняем: docker images bottgdomains-gostsslcheck* --format "{{.Repository}}:{{.Tag}}"
+REM Пробуем разные варианты поиска образов
+REM Вариант 1: bottgdomains-gostsslcheck*
 docker images bottgdomains-gostsslcheck* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\gost_images.txt" 2>&1
 if exist "%TEMP%\gost_images.txt" (
-    echo [DEBUG] Временный файл создан, размер:
-    for %%F in ("%TEMP%\gost_images.txt") do echo   %%F - %%~zF байт
-    echo [DEBUG] Содержимое файла:
-    type "%TEMP%\gost_images.txt"
     for /f "usebackq tokens=*" %%i in ("%TEMP%\gost_images.txt") do (
         if "!GOST_IMAGE!"=="" (
             set GOST_IMAGE=%%i
-            echo     [INFO] Найден образ: !GOST_IMAGE!
+            echo     [INFO] Найден образ (bottgdomains-*): !GOST_IMAGE!
             goto :found_gost
         )
     )
     del "%TEMP%\gost_images.txt" >nul 2>&1
-) else (
-    echo [WARNING] Временный файл не создан, пробуем альтернативный способ...
-    REM Альтернативный способ - через docker images без форматирования
-    for /f "tokens=1,2" %%a in ('docker images bottgdomains-gostsslcheck* 2^>nul ^| findstr /V "REPOSITORY" ^| findstr /V "IMAGE"') do (
+)
+
+REM Вариант 2: имя проекта + gostsslcheck
+if "!GOST_IMAGE!"=="" (
+    docker images %PROJECT_NAME%-gostsslcheck* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\gost_images.txt" 2>&1
+    if exist "%TEMP%\gost_images.txt" (
+        for /f "usebackq tokens=*" %%i in ("%TEMP%\gost_images.txt") do (
+            if "!GOST_IMAGE!"=="" (
+                set GOST_IMAGE=%%i
+                echo     [INFO] Найден образ (%PROJECT_NAME%-*): !GOST_IMAGE!
+                goto :found_gost
+            )
+        )
+        del "%TEMP%\gost_images.txt" >nul 2>&1
+    )
+)
+
+REM Вариант 3: просто gostsslcheck*
+if "!GOST_IMAGE!"=="" (
+    docker images gostsslcheck* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\gost_images.txt" 2>&1
+    if exist "%TEMP%\gost_images.txt" (
+        for /f "usebackq tokens=*" %%i in ("%TEMP%\gost_images.txt") do (
+            if "!GOST_IMAGE!"=="" (
+                set GOST_IMAGE=%%i
+                echo     [INFO] Найден образ (gostsslcheck*): !GOST_IMAGE!
+                goto :found_gost
+            )
+        )
+        del "%TEMP%\gost_images.txt" >nul 2>&1
+    )
+)
+
+REM Вариант 4: альтернативный способ через docker images без форматирования
+if "!GOST_IMAGE!"=="" (
+    for /f "tokens=1,2" %%a in ('docker images 2^>nul ^| findstr /C:"gostsslcheck" ^| findstr /V "REPOSITORY"') do (
         if "!GOST_IMAGE!"=="" (
             if not "%%a"=="" (
                 set GOST_IMAGE=%%a:%%b
@@ -113,12 +146,19 @@ if exist "%TEMP%\gost_images.txt" (
         )
     )
 )
+
 :found_gost
 
 if "!GOST_IMAGE!"=="" (
     echo [ERROR] Образ gostsslcheck не найден
+    echo [INFO] Искали образы с именами:
+    echo     - bottgdomains-gostsslcheck*
+    echo     - %PROJECT_NAME%-gostsslcheck*
+    echo     - gostsslcheck*
     echo [INFO] Доступные образы:
     docker images | findstr /C:"gostsslcheck" || echo   (нет образов gostsslcheck)
+    echo [INFO] Все образы:
+    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}" | head -10
     pause
     exit /b 1
 )
@@ -149,27 +189,53 @@ if exist "%EXPORT_DIR%\images\gostsslcheck.tar" (
 REM Получаем имя образа tgscanner
 echo   - Поиск образа tgscanner...
 set TGSCANNER_IMAGE=
-REM Используем docker images с фильтром и берем первый результат
-REM Создаем временный файл для надежного парсинга
-echo [DEBUG] Выполняем: docker images bottgdomains-tgscanner* --format "{{.Repository}}:{{.Tag}}"
+REM Пробуем разные варианты поиска образов
+REM Вариант 1: bottgdomains-tgscanner*
 docker images bottgdomains-tgscanner* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\tgscanner_images.txt" 2>&1
 if exist "%TEMP%\tgscanner_images.txt" (
-    echo [DEBUG] Временный файл создан, размер:
-    for %%F in ("%TEMP%\tgscanner_images.txt") do echo   %%F - %%~zF байт
-    echo [DEBUG] Содержимое файла:
-    type "%TEMP%\tgscanner_images.txt"
     for /f "usebackq tokens=*" %%i in ("%TEMP%\tgscanner_images.txt") do (
         if "!TGSCANNER_IMAGE!"=="" (
             set TGSCANNER_IMAGE=%%i
-            echo     [INFO] Найден образ: !TGSCANNER_IMAGE!
+            echo     [INFO] Найден образ (bottgdomains-*): !TGSCANNER_IMAGE!
             goto :found_tgscanner
         )
     )
     del "%TEMP%\tgscanner_images.txt" >nul 2>&1
-) else (
-    echo [WARNING] Временный файл не создан, пробуем альтернативный способ...
-    REM Альтернативный способ - через docker images без форматирования
-    for /f "tokens=1,2" %%a in ('docker images bottgdomains-tgscanner* 2^>nul ^| findstr /V "REPOSITORY" ^| findstr /V "IMAGE"') do (
+)
+
+REM Вариант 2: имя проекта + tgscanner
+if "!TGSCANNER_IMAGE!"=="" (
+    docker images %PROJECT_NAME%-tgscanner* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\tgscanner_images.txt" 2>&1
+    if exist "%TEMP%\tgscanner_images.txt" (
+        for /f "usebackq tokens=*" %%i in ("%TEMP%\tgscanner_images.txt") do (
+            if "!TGSCANNER_IMAGE!"=="" (
+                set TGSCANNER_IMAGE=%%i
+                echo     [INFO] Найден образ (%PROJECT_NAME%-*): !TGSCANNER_IMAGE!
+                goto :found_tgscanner
+            )
+        )
+        del "%TEMP%\tgscanner_images.txt" >nul 2>&1
+    )
+)
+
+REM Вариант 3: просто tgscanner*
+if "!TGSCANNER_IMAGE!"=="" (
+    docker images tgscanner* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\tgscanner_images.txt" 2>&1
+    if exist "%TEMP%\tgscanner_images.txt" (
+        for /f "usebackq tokens=*" %%i in ("%TEMP%\tgscanner_images.txt") do (
+            if "!TGSCANNER_IMAGE!"=="" (
+                set TGSCANNER_IMAGE=%%i
+                echo     [INFO] Найден образ (tgscanner*): !TGSCANNER_IMAGE!
+                goto :found_tgscanner
+            )
+        )
+        del "%TEMP%\tgscanner_images.txt" >nul 2>&1
+    )
+)
+
+REM Вариант 4: альтернативный способ через docker images без форматирования
+if "!TGSCANNER_IMAGE!"=="" (
+    for /f "tokens=1,2" %%a in ('docker images 2^>nul ^| findstr /C:"tgscanner" ^| findstr /V "REPOSITORY"') do (
         if "!TGSCANNER_IMAGE!"=="" (
             if not "%%a"=="" (
                 set TGSCANNER_IMAGE=%%a:%%b
@@ -179,12 +245,19 @@ if exist "%TEMP%\tgscanner_images.txt" (
         )
     )
 )
+
 :found_tgscanner
 
 if "!TGSCANNER_IMAGE!"=="" (
     echo [ERROR] Образ tgscanner не найден
+    echo [INFO] Искали образы с именами:
+    echo     - bottgdomains-tgscanner*
+    echo     - %PROJECT_NAME%-tgscanner*
+    echo     - tgscanner*
     echo [INFO] Доступные образы:
     docker images | findstr /C:"tgscanner" || echo   (нет образов tgscanner)
+    echo [INFO] Все образы:
+    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}" | head -10
     pause
     exit /b 1
 )
@@ -314,7 +387,7 @@ echo   - Копирование deploy.sh...
 if exist "scripts\deploy.sh" (
     copy scripts\deploy.sh "%EXPORT_DIR%\project\"
     if errorlevel 1 (
-        echo [WARNING] Не удалось скопировать deploy.sh
+        echo     [WARNING] Не удалось скопировать deploy.sh
     ) else (
         echo     [OK] deploy.sh скопирован
     )
@@ -339,6 +412,16 @@ if exist "README.md" (
         echo     [WARNING] Не удалось скопировать README.md
     ) else (
         echo     [OK] README.md скопирован
+    )
+)
+
+if exist "QUICKSTART.md" (
+    echo   - Копирование QUICKSTART.md...
+    copy QUICKSTART.md "%EXPORT_DIR%\project\"
+    if errorlevel 1 (
+        echo     [WARNING] Не удалось скопировать QUICKSTART.md
+    ) else (
+        echo     [OK] QUICKSTART.md скопирован
     )
 )
 
