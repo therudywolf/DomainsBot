@@ -8,8 +8,7 @@
 
 ## 📚 Документация
 
-Полная документация доступна в директории `docs/`:
-
+- **[QUICKSTART.md](QUICKSTART.md)** ⚡ - Быстрый старт "Под ключ" (3 шага)
 - **[API.md](docs/API.md)** - Документация по API, командам и использованию
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Архитектура системы и компоненты
 - **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** - Руководство по развертыванию
@@ -75,35 +74,61 @@
   - 📄 Загрузка файлов
 - **Статистика**: Просмотр статистики использования бота
 
-## ⚡️ Быстрый старт
+## ⚡️ Быстрый старт "Под ключ"
 
-### Требования
-- Docker и Docker Compose
-- Telegram Bot Token (получить у [@BotFather](https://t.me/BotFather))
+**📖 Полное руководство:** [QUICKSTART.md](QUICKSTART.md)
 
-### Установка
+### Автоматическая установка (рекомендуется)
+
+**Linux/Mac:**
+```bash
+git clone https://github.com/therudywolf/BotTGDomains.git
+cd BotTGDomains
+chmod +x scripts/quickstart.sh
+./scripts/quickstart.sh
+```
+
+**Windows:**
+```cmd
+git clone https://github.com/therudywolf/BotTGDomains.git
+cd BotTGDomains
+scripts\quickstart.bat
+```
+
+Скрипт автоматически:
+- ✅ Проверит Docker
+- ✅ Создаст необходимые директории
+- ✅ Настроит конфигурацию
+- ✅ Запустит все сервисы
+
+**Вам нужно только:**
+1. Получить токен у [@BotFather](https://t.me/BotFather)
+2. Получить ваш ID у [@userinfobot](https://t.me/userinfobot)
+3. Указать их в `.env` файле
+
+### Ручная установка
 
 1. **Клонируйте репозиторий:**
 ```bash
 git clone https://github.com/therudywolf/BotTGDomains.git
 cd BotTGDomains
+mkdir -p data
 ```
 
-2. **Создайте файл `.env`** (для Docker используется `tg_domain_scanner_final/.env`):
+2. **Создайте файл `.env`:**
 ```bash
 cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
 ```
 
-3. **Настройте переменные окружения:**
+3. **Настройте обязательные параметры** в `tg_domain_scanner_final/.env`:
 ```env
-TG_TOKEN=your_telegram_bot_token
-ADMIN_ID=your_telegram_user_id
-REQUEST_ACCESS_URL=https://t.me/your_username
+TG_TOKEN=ваш_токен_от_BotFather
+ADMIN_ID=ваш_telegram_user_id
 ```
 
 4. **Запустите бота:**
 ```bash
-docker compose up --build -d
+docker compose up -d --build
 ```
 
 5. **Проверьте статус:**
@@ -111,6 +136,8 @@ docker compose up --build -d
 docker compose ps
 docker compose logs -f tgscanner
 ```
+
+**Готово!** Бот полностью настроен и готов к работе. Все опциональные параметры имеют значения по умолчанию.
 
 ## 🏗️ Архитектура
 

@@ -724,12 +724,21 @@ class LoggingMiddleware:
         start_time = asyncio.get_running_loop().time()
         event_type = type(event).__name__
         
-        # Логируем входящее событие
+        # Логируем входящее событие и регистрируем чат
         if isinstance(event, types.Message):
             user_id = event.from_user.id if event.from_user else None
             username = event.from_user.username if event.from_user else None
             chat_id = event.chat.id if event.chat else None
             text_preview = (event.text or event.caption or "")[:100] if hasattr(event, 'text') or hasattr(event, 'caption') else ""
+            
+            # Автоматически регистрируем чат, если сообщение пришло не из личных сообщений
+            if user_id and chat_id and chat_id != user_id:
+                try:
+                    chat_title = event.chat.title or f"Chat {chat_id}"
+                    chat_type = event.chat.type
+                    register_chat(user_id, chat_id, chat_title, chat_type)
+                except Exception as e:
+                    logger.debug(f"Ошибка при регистрации чата {chat_id}: {e}")
             
             logger.info(
                 f"📨 Входящее сообщение | "
@@ -912,6 +921,12 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         f"text_length={len(raw_text)} | "
         f"chat_id={message.chat.id}"
     )
+    
+    # Автоматически регистрируем чат, если сообщение пришло не из личных сообщений
+    if message.chat.id != user_id:
+        chat_title = message.chat.title or f"Chat {message.chat.id}"
+        chat_type = message.chat.type
+        register_chat(user_id, message.chat.id, chat_title, chat_type)
     
     # Логируем начало обработки для отладки
     processing_start = asyncio.get_event_loop().time()
@@ -3149,14 +3164,39 @@ async def select_notification_chat(callback: types.CallbackQuery):
     
     try:
         chat_id = int(chat_id_str)
-        set_notification_chat_id(user_id, chat_id)
         
+        # Проверяем, что чат существует в списке известных чатов
         known_chats = get_known_chats(user_id)
         selected_chat = next((c for c in known_chats if c.get("chat_id") == chat_id), None)
-        chat_name = selected_chat.get("title", f"Chat {chat_id}") if selected_chat else f"Chat {chat_id}"
         
-        await callback.answer(f"✅ Чат '{chat_name}' выбран для уведомлений")
-        await settings_notification_chat(callback)
+        if not selected_chat:
+            await callback.answer("❌ Чат не найден в списке. Попробуйте добавить бота в чат и отправить сообщение.", show_alert=True)
+            return
+        
+        # Проверяем доступность чата через API Telegram
+        bot = callback.message.bot if callback.message else callback.bot
+        if bot:
+            try:
+                # Пытаемся получить информацию о чате через API
+                chat_info = await bot.get_chat(chat_id)
+                # Если успешно, устанавливаем чат для уведомлений
+                set_notification_chat_id(user_id, chat_id)
+                chat_name = chat_info.title if hasattr(chat_info, 'title') and chat_info.title else selected_chat.get("title", f"Chat {chat_id}")
+                await callback.answer(f"✅ Чат '{chat_name}' выбран для уведомлений")
+                await settings_notification_chat(callback)
+            except Exception as e:
+                logger.warning(f"Не удалось получить информацию о чате {chat_id}: {e}")
+                # Если не удалось получить через API, но чат есть в списке, все равно устанавливаем
+                set_notification_chat_id(user_id, chat_id)
+                chat_name = selected_chat.get("title", f"Chat {chat_id}")
+                await callback.answer(f"✅ Чат '{chat_name}' выбран для уведомлений (проверка через API не удалась)")
+                await settings_notification_chat(callback)
+        else:
+            # Если bot недоступен, просто устанавливаем из известных чатов
+            set_notification_chat_id(user_id, chat_id)
+            chat_name = selected_chat.get("title", f"Chat {chat_id}")
+            await callback.answer(f"✅ Чат '{chat_name}' выбран для уведомлений")
+            await settings_notification_chat(callback)
     except ValueError:
         await callback.answer("❌ Неверный ID чата", show_alert=True)
 

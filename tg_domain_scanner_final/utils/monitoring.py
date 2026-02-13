@@ -468,6 +468,35 @@ async def _check_domain(bot: Bot, user_id: int, domain: str, notification_chat_i
                 await bot.send_message(target_chat_id, notification_text)
                 logger.info(f"Отправлено уведомление в чат {target_chat_id} для пользователя {user_id} (домен: {domain})")
             except Exception as e:
+                error_msg = str(e).lower()
+                # Проверяем, является ли ошибка связанной с недоступностью чата
+                is_chat_not_found = (
+                    "chat not found" in error_msg or
+                    "чат не найден" in error_msg or
+                    "chat_id is empty" in error_msg or
+                    "bad request: chat not found" in error_msg
+                )
+                
+                if is_chat_not_found and target_chat_id != user_id:
+                    # Чат недоступен - удаляем его из настроек и известных чатов
+                    logger.warning(f"Чат {target_chat_id} недоступен для пользователя {user_id}, удаляем из настроек")
+                    try:
+                        from utils.chat_settings import set_notification_chat_id, remove_known_chat
+                        set_notification_chat_id(user_id, None)
+                        remove_known_chat(user_id, target_chat_id)
+                        # Отправляем уведомление пользователю о проблеме
+                        try:
+                            await bot.send_message(
+                                user_id,
+                                f"⚠️ Чат с ID {target_chat_id} недоступен. "
+                                f"Уведомления переключены на личные сообщения.\n\n"
+                                f"Чтобы настроить другой чат, используйте /settings"
+                            )
+                        except Exception:
+                            pass
+                    except Exception as cleanup_error:
+                        logger.error(f"Ошибка при очистке настроек чата: {cleanup_error}")
+                
                 logger.warning(f"Не удалось отправить уведомление в чат {target_chat_id} для пользователя {user_id}: {e}")
                 # Fallback: отправляем в личные сообщения
                 if target_chat_id != user_id:
