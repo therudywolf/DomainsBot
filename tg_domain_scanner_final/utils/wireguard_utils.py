@@ -218,10 +218,22 @@ def ensure_wg_interface_up() -> bool:
         logger.error(f"Конфиг WireGuard не найден: {config_path}")
         return False
     
+    # Исправляем права доступа к конфигу (wg-quick требует 600 или 400)
+    try:
+        current_mode = os.stat(config_path).st_mode
+        # Устанавливаем права 600 (только владелец может читать/писать)
+        os.chmod(config_path, 0o600)
+        logger.debug(f"Права доступа к конфигу WireGuard установлены: 600")
+    except Exception as e:
+        logger.warning(f"Не удалось установить права доступа к конфигу: {e}")
+        # Продолжаем попытку поднять интерфейс
+    
     try:
         # Поднимаем интерфейс через wg-quick
+        # Используем --no-resolvconf чтобы избежать проблем с resolvconf в Docker
+        # В Docker контейнерах DNS настраивается через /etc/resolv.conf, resolvconf не нужен
         result = subprocess.run(
-            ["wg-quick", "up", str(config_path)],
+            ["wg-quick", "up", "--no-resolvconf", str(config_path)],
             capture_output=True,
             text=True,
             timeout=10
@@ -264,8 +276,9 @@ def ensure_wg_interface_down() -> bool:
     
     try:
         # Опускаем интерфейс через wg-quick
+        # Используем --no-resolvconf для консистентности
         result = subprocess.run(
-            ["wg-quick", "down", interface_name],
+            ["wg-quick", "down", "--no-resolvconf", interface_name],
             capture_output=True,
             text=True,
             timeout=10
