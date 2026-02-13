@@ -26,6 +26,7 @@ from cryptography.x509.oid import NameOID
 
 from utils.cache import ttl_cache
 from config import settings
+from utils.wireguard_utils import ensure_wg_interface_up, get_wg_interface_ip
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +73,7 @@ else:
     _hosts: List[str] = [h.strip() for h in os.getenv("GOSTSSL_HOSTS", "gostsslcheck").split(',') if h.strip()]
     _endpoints: List[str] = [f"http://{h}:8080/check" for h in _hosts]
 
-# Резервные варианты при массовых 504
-# Прокси Яндекса (если задан через переменную окружения)
-# Формат: http://proxy.yandex.ru:3128 или socks5://proxy.yandex.ru:1080
-_yandex_proxy: Optional[str] = os.getenv("YANDEX_PROXY")
-# DNS Яндекса для информации (используется для логирования)
-_yandex_dns: str = os.getenv("YANDEX_DNS", "77.88.8.8")
+# Резервный вариант при массовых 504 - WireGuard подключение
 
 # Глобальный connector для переиспользования соединений
 _gost_connector: Optional[aiohttp.TCPConnector] = None
@@ -220,51 +216,61 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
         if attempt < len(endpoints):
             await asyncio.sleep(settings.GOST_RETRY_DELAY)
     
-    # Если все endpoints вернули 504 и есть резервный прокси - пробуем через прокси
-    if all_504_errors and _yandex_proxy:
-        logger.info(f"Все endpoints вернули 504 для {domain}, пробуем через резервный прокси Яндекса")
+    # Если все endpoints вернули 504 - пробуем через WireGuard
+    if all_504_errors:
+        logger.info(f"Все endpoints вернули 504 для {domain}, пробуем через WireGuard подключение")
         try:
-            proxy_timeout = aiohttp.ClientTimeout(total=timeout)
-            connector = aiohttp.TCPConnector(
-                limit=10,
-                limit_per_host=3,
-                force_close=True,
-                ttl_dns_cache=300,
-            )
-            
-            async with aiohttp.ClientSession(
-                timeout=proxy_timeout,
-                connector=connector
-            ) as session:
-                # Пробуем первый endpoint через прокси
-                if _endpoints:
-                    proxy_url = _endpoints[0]
-                    try:
-                        async with session.get(
-                            proxy_url,
-                            params={"domain": domain},
-                            proxy=_yandex_proxy
-                        ) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                result = bool(data.get("is_gost"))
-                                logger.info(f"✅ GOST проверка для {domain} через прокси Яндекса: {result}")
-                                return result
-                            else:
-                                logger.warning(f"Прокси Яндекса вернул статус {resp.status} для {domain}")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Таймаут при использовании прокси Яндекса для {domain}")
-                    except (aiohttp.ClientError, RuntimeError) as proxy_error:
-                        logger.warning(f"Ошибка при использовании прокси Яндекса для {domain}: {proxy_error}")
-                    except Exception as proxy_error:
-                        logger.error(f"Неожиданная ошибка при использовании прокси Яндекса для {domain}: {proxy_error}", exc_info=True)
-                    finally:
-                        try:
-                            await connector.close()
-                        except Exception:
-                            pass
+            # Поднимаем WireGuard интерфейс если не поднят
+            if not ensure_wg_interface_up():
+                logger.warning(f"Не удалось поднять WireGuard интерфейс для {domain}")
+            else:
+                # Получаем IP адрес WireGuard интерфейса
+                wg_ip = get_wg_interface_ip()
+                if not wg_ip:
+                    logger.warning(f"Не удалось получить IP адрес WireGuard интерфейса для {domain}")
+                else:
+                    # Используем WireGuard IP для подключения
+                    wg_timeout = aiohttp.ClientTimeout(total=timeout)
+                    connector = aiohttp.TCPConnector(
+                        limit=10,
+                        limit_per_host=3,
+                        force_close=True,
+                        ttl_dns_cache=300,
+                        local_addr=(wg_ip, 0)  # Привязка к WireGuard IP
+                    )
+                    
+                    async with aiohttp.ClientSession(
+                        timeout=wg_timeout,
+                        connector=connector
+                    ) as session:
+                        # Пробуем первый endpoint через WireGuard
+                        if _endpoints:
+                            wg_url = _endpoints[0]
+                            try:
+                                async with session.get(
+                                    wg_url,
+                                    params={"domain": domain}
+                                ) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        result = bool(data.get("is_gost"))
+                                        logger.info(f"✅ GOST проверка для {domain} через WireGuard: {result}")
+                                        return result
+                                    else:
+                                        logger.warning(f"WireGuard подключение вернуло статус {resp.status} для {domain}")
+                            except asyncio.TimeoutError:
+                                logger.warning(f"Таймаут при использовании WireGuard для {domain}")
+                            except (aiohttp.ClientError, RuntimeError) as wg_error:
+                                logger.warning(f"Ошибка при использовании WireGuard для {domain}: {wg_error}")
+                            except Exception as wg_error:
+                                logger.error(f"Неожиданная ошибка при использовании WireGuard для {domain}: {wg_error}", exc_info=True)
+                            finally:
+                                try:
+                                    await connector.close()
+                                except Exception:
+                                    pass
         except Exception as e:
-            logger.warning(f"Не удалось использовать резервный прокси Яндекса для {domain}: {e}")
+            logger.warning(f"Не удалось использовать WireGuard подключение для {domain}: {e}")
     
     logger.error(f"Все GOST endpoints недоступны для {domain}. Последняя ошибка: {last_error}")
     return None

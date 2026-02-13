@@ -46,3 +46,6 @@ data/bot.log*
 # OS
 Thumbs.db
 .DS_Store
+
+# WireGuard
+wg/TGBOT.conf

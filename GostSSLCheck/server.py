@@ -92,10 +92,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         
         # Health check endpoint
         if p.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
+                self.wfile.flush()
+            except (BrokenPipeError, OSError):
+                # Клиент закрыл соединение до получения ответа - это нормально
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Client closed connection during health check")
+                return
             return
         
         # Основной endpoint для проверки
