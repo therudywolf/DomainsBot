@@ -29,7 +29,7 @@ cd BotTGDomains
 
 ### 2. Создание файла `.env`
 
-Создайте файл `.env` в корне проекта:
+Создайте файл `.env` (для Docker: `tg_domain_scanner_final/.env`):
 
 ```env
 # Обязательные параметры
@@ -79,7 +79,9 @@ MAX_FILE_SIZE_MB=10
 #### Шаг 1: Создание директорий
 
 ```bash
-mkdir -p data logs
+mkdir -p data
+cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
+# Отредактируйте tg_domain_scanner_final/.env и укажите TG_TOKEN и ADMIN_ID
 ```
 
 #### Шаг 2: Запуск сервисов

@@ -429,10 +429,13 @@ echo 2. Создайте файл .env:
 echo    cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
 echo    # Отредактируйте .env и укажите TG_TOKEN и ADMIN_ID
 echo.
-echo 3. Запустите сервисы:
+echo 3. Создайте директорию для данных:
+echo    mkdir -p data
+echo.
+echo 4. Запустите сервисы:
 echo    docker-compose up -d
 echo.
-echo 4. Проверьте статус:
+echo 5. Проверьте статус:
 echo    docker-compose ps
 echo    docker-compose logs -f tgscanner
 echo.

@@ -604,17 +604,19 @@ def build_settings_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
 
 
 def build_access_denied_keyboard() -> types.InlineKeyboardMarkup:
-    """Кнопка для запроса доступа."""
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text="📬 Запросить доступ",
-                    url=REQUEST_ACCESS_URL,
-                ),
+    """Кнопка для запроса доступа (если задан REQUEST_ACCESS_URL)."""
+    if REQUEST_ACCESS_URL and REQUEST_ACCESS_URL.startswith(("http://", "https://")):
+        return types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="📬 Запросить доступ",
+                        url=REQUEST_ACCESS_URL,
+                    ),
+                ]
             ]
-        ]
-    )
+        )
+    return types.InlineKeyboardMarkup(inline_keyboard=[])
 
 
 def build_admin_keyboard() -> types.InlineKeyboardMarkup:

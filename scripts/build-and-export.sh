@@ -173,10 +173,13 @@ BotTGDomains - Offline Deployment Package
    cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
    # Отредактируйте .env и укажите TG_TOKEN и ADMIN_ID
 
-3. Запустите сервисы:
+3. Создайте директорию для данных:
+   mkdir -p data
+
+4. Запустите сервисы:
    docker-compose up -d
 
-4. Проверьте статус:
+5. Проверьте статус:
    docker-compose ps
    docker-compose logs -f tgscanner
 

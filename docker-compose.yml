@@ -44,7 +44,7 @@ services:
         condition: service_healthy
       gostsslcheck3:
         condition: service_healthy
-    env_file: .env
+    env_file: tg_domain_scanner_final/.env
     environment:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
     volumes:

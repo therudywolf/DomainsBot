@@ -230,7 +230,7 @@ nano tg_domain_scanner_final/.env  # или используйте другой 
 4. **Создайте директорию для данных**:
 
 ```bash
-mkdir -p tg_domain_scanner_final/data
+mkdir -p data
 ```
 
 5. **Запустите сервисы**:

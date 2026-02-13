@@ -128,8 +128,8 @@ echo "✅ docker-compose.override.yml создан"
 echo ""
 
 echo "📁 Шаг 2: Создание необходимых директорий..."
-mkdir -p tg_domain_scanner_final/data
-echo "✅ Директории созданы"
+mkdir -p data
+echo "✅ Директория data/ создана (для volumes docker-compose)"
 echo ""
 
 # Проверка наличия .env файла

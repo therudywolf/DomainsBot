@@ -89,9 +89,9 @@ git clone https://github.com/therudywolf/BotTGDomains.git
 cd BotTGDomains
 ```
 
-2. **Создайте файл `.env` в корне проекта:**
+2. **Создайте файл `.env`** (для Docker используется `tg_domain_scanner_final/.env`):
 ```bash
-cp .env.example .env
+cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
 ```
 
 3. **Настройте переменные окружения:**
