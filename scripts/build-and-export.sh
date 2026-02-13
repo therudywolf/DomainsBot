@@ -71,14 +71,11 @@ echo ""
 # Получаем имена образов из docker-compose
 echo "💾 Шаг 4: Экспорт Docker образов..."
 
-# Получаем имя проекта из docker-compose (используем имя директории или из переменной окружения)
+# Получаем имя проекта из docker-compose
 PROJECT_NAME=$(basename "$PROJECT_ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
-# Также проверяем переменную окружения COMPOSE_PROJECT_NAME
 if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
     PROJECT_NAME=$(echo "$COMPOSE_PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
 fi
-
-# Если имя проекта пустое или слишком короткое, используем дефолтное
 if [ -z "$PROJECT_NAME" ] || [ ${#PROJECT_NAME} -lt 3 ]; then
     PROJECT_NAME="bottgdomains"
 fi
@@ -86,113 +83,88 @@ fi
 echo "   Имя проекта Docker Compose: $PROJECT_NAME"
 echo ""
 
-# Экспортируем образы
+# --- ЭКСПОРТ GOST ---
 echo "  - Экспорт образа gostsslcheck..."
-# Пробуем разные варианты имен образов
 GOST_IMAGE=""
-# Вариант 1: имя проекта + сервис (стандартный формат Docker Compose)
 GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^${PROJECT_NAME}-gostsslcheck[0-9]*:" | head -1)
-# Вариант 2: bottgdomains-* (старое имя)
 if [ -z "$GOST_IMAGE" ]; then
     GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^bottgdomains-gostsslcheck[0-9]*:" | head -1)
 fi
-# Вариант 3: просто gostsslcheck* (если образ был собран напрямую)
 if [ -z "$GOST_IMAGE" ]; then
     GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^gostsslcheck[0-9]*:" | head -1)
 fi
-# Вариант 4: любой образ содержащий gostsslcheck
 if [ -z "$GOST_IMAGE" ]; then
     GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -i "gostsslcheck" | grep -v "<none>" | head -1)
 fi
 
 if [ -z "$GOST_IMAGE" ]; then
     echo "❌ Ошибка: Образ gostsslcheck не найден"
-    echo "   Искали образы с именами:"
-    echo "     - ${PROJECT_NAME}-gostsslcheck*"
-    echo "     - bottgdomains-gostsslcheck*"
-    echo "     - gostsslcheck*"
-    echo ""
-    echo "   Доступные образы:"
-    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}" | head -10
-    echo ""
-    echo "   Попробуйте собрать образы: $DOCKER_COMPOSE build"
     exit 1
 fi
 echo "   Найден образ: $GOST_IMAGE"
 docker save "$GOST_IMAGE" -o "$EXPORT_DIR/images/gostsslcheck.tar"
-if [ ! -f "$EXPORT_DIR/images/gostsslcheck.tar" ]; then
-    echo "❌ Ошибка: Не удалось создать gostsslcheck.tar"
-    exit 1
-fi
 GOST_SIZE=$(du -h "$EXPORT_DIR/images/gostsslcheck.tar" | cut -f1)
 echo "    ✅ gostsslcheck.tar сохранен (размер: $GOST_SIZE)"
 
+# --- ЭКСПОРТ TGSCANNER ---
 echo "  - Экспорт образа tgscanner..."
-# Пробуем разные варианты имен образов
 TGSCANNER_IMAGE=""
-# Вариант 1: имя проекта + сервис
 TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^${PROJECT_NAME}-tgscanner:" | head -1)
-# Вариант 2: bottgdomains-*
 if [ -z "$TGSCANNER_IMAGE" ]; then
     TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^bottgdomains-tgscanner:" | head -1)
 fi
-# Вариант 3: просто tgscanner
 if [ -z "$TGSCANNER_IMAGE" ]; then
     TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^tgscanner:" | head -1)
 fi
-# Вариант 4: любой образ содержащий tgscanner
 if [ -z "$TGSCANNER_IMAGE" ]; then
     TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -i "tgscanner" | grep -v "<none>" | head -1)
 fi
 
 if [ -z "$TGSCANNER_IMAGE" ]; then
     echo "❌ Ошибка: Образ tgscanner не найден"
-    echo "   Искали образы с именами:"
-    echo "     - ${PROJECT_NAME}-tgscanner*"
-    echo "     - bottgdomains-tgscanner*"
-    echo "     - tgscanner*"
-    echo ""
-    echo "   Доступные образы:"
-    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}" | head -10
-    echo ""
-    echo "   Попробуйте собрать образы: $DOCKER_COMPOSE build"
     exit 1
 fi
 echo "   Найден образ: $TGSCANNER_IMAGE"
 docker save "$TGSCANNER_IMAGE" -o "$EXPORT_DIR/images/tgscanner.tar"
-if [ ! -f "$EXPORT_DIR/images/tgscanner.tar" ]; then
-    echo "❌ Ошибка: Не удалось создать tgscanner.tar"
-    exit 1
-fi
 TGSCANNER_SIZE=$(du -h "$EXPORT_DIR/images/tgscanner.tar" | cut -f1)
 echo "    ✅ tgscanner.tar сохранен (размер: $TGSCANNER_SIZE)"
+
+# --- ЭКСПОРТ WIREGUARD (НОВАЯ ЧАСТЬ) ---
+echo "  - Экспорт образа wireguard (masipcat/wireguard-go)..."
+# Пытаемся обновить образ, если есть сеть
+docker pull masipcat/wireguard-go:latest 2>/dev/null || true
+
+if docker image inspect masipcat/wireguard-go:latest >/dev/null 2>&1; then
+    docker save masipcat/wireguard-go:latest -o "$EXPORT_DIR/images/wireguard.tar"
+    WG_SIZE=$(du -h "$EXPORT_DIR/images/wireguard.tar" | cut -f1)
+    echo "    ✅ wireguard.tar сохранен (размер: $WG_SIZE)"
+else
+    echo "    ❌ Ошибка: Образ masipcat/wireguard-go:latest не найден локально!"
+    echo "       Сделайте 'docker pull masipcat/wireguard-go:latest' вручную."
+    exit 1
+fi
 
 echo ""
 echo "📊 Размеры экспортированных образов:"
 echo "  - gostsslcheck.tar: $GOST_SIZE"
 echo "  - tgscanner.tar: $TGSCANNER_SIZE"
+echo "  - wireguard.tar: $WG_SIZE"
 echo ""
 
 # Копируем файлы проекта
 echo "📋 Шаг 5: Копирование файлов проекта..."
 
 # Копируем основные файлы и директории
-# ВАЖНО: Используем docker-compose.yml из корня (с правильными путями для экспорта)
 cp docker-compose.yml "$EXPORT_DIR/project/"
-# Копируем tg_domain_scanner_final (включает Dockerfile и все утилиты)
 cp -r tg_domain_scanner_final "$EXPORT_DIR/project/"
-# Исключаем внутренний docker-compose.yml из tg_domain_scanner_final (используем корневой)
 rm -f "$EXPORT_DIR/project/tg_domain_scanner_final/docker-compose.yml" 2>/dev/null || true
 cp -r GostSSLCheck "$EXPORT_DIR/project/"
 
-# Копируем директорию wg/ если она существует (для WireGuard конфига)
-# Конфиг монтируется в WireGuard контейнер через volume
+# Копируем директорию wg/
 if [ -d "wg" ]; then
     echo "  - Копирование директории wg/..."
     mkdir -p "$EXPORT_DIR/project/wg"
-    # Копируем все файлы включая конфиг (монтируется в WireGuard контейнер)
     cp -r wg/* "$EXPORT_DIR/project/wg/" 2>/dev/null || true
-    echo "    ✅ Директория wg/ скопирована (конфиг монтируется в WireGuard контейнер)"
 fi
 
 # Копируем скрипты развертывания
@@ -201,63 +173,22 @@ if [ -f "scripts/deploy.sh" ]; then
     chmod +x "$EXPORT_DIR/project/deploy.sh"
 fi
 
-# Копируем документацию
-if [ -f "DEPLOYMENT_OFFLINE.md" ]; then
-    cp DEPLOYMENT_OFFLINE.md "$EXPORT_DIR/project/"
-fi
-if [ -f "README.md" ]; then
-    cp README.md "$EXPORT_DIR/project/"
-fi
-if [ -f "QUICKSTART.md" ]; then
-    cp QUICKSTART.md "$EXPORT_DIR/project/"
-fi
+# Копируем доки
+if [ -f "DEPLOYMENT_OFFLINE.md" ]; then cp DEPLOYMENT_OFFLINE.md "$EXPORT_DIR/project/"; fi
+if [ -f "README.md" ]; then cp README.md "$EXPORT_DIR/project/"; fi
+if [ -f "QUICKSTART.md" ]; then cp QUICKSTART.md "$EXPORT_DIR/project/"; fi
 
-# Копируем .env.example если есть
+# Копируем .env.example
 if [ -f "tg_domain_scanner_final/.env.example" ]; then
     cp tg_domain_scanner_final/.env.example "$EXPORT_DIR/project/tg_domain_scanner_final/"
 fi
 
-# Исключаем ненужные файлы
+# Чистка мусора
 rm -rf "$EXPORT_DIR/project/tg_domain_scanner_final/data" 2>/dev/null || true
 rm -rf "$EXPORT_DIR/project/tg_domain_scanner_final/__pycache__" 2>/dev/null || true
 rm -rf "$EXPORT_DIR/project/tg_domain_scanner_final/**/__pycache__" 2>/dev/null || true
 find "$EXPORT_DIR/project" -name "*.pyc" -delete 2>/dev/null || true
 find "$EXPORT_DIR/project" -name ".pytest_cache" -type d -exec rm -rf {} + 2>/dev/null || true
-
-# Проверяем наличие важных файлов WireGuard
-echo "  - Проверка файлов WireGuard..."
-if [ ! -f "$EXPORT_DIR/project/tg_domain_scanner_final/utils/wireguard_utils.py" ]; then
-    echo "    ⚠️  Предупреждение: wireguard_utils.py не найден в экспорте!"
-else
-    echo "    ✅ wireguard_utils.py найден в экспорте"
-fi
-
-# Проверяем что Dockerfile НЕ содержит wireguard-tools (теперь WireGuard в отдельном контейнере)
-if grep -q "wireguard-tools" "$EXPORT_DIR/project/tg_domain_scanner_final/Dockerfile" 2>/dev/null; then
-    echo "    ⚠️  Предупреждение: Dockerfile содержит wireguard-tools (должен быть удален, WireGuard теперь в отдельном контейнере)"
-else
-    echo "    ✅ Dockerfile не содержит wireguard-tools (правильно, WireGuard в отдельном контейнере)"
-fi
-
-# Проверяем что docker-compose.yml содержит WireGuard сервис
-if grep -q "wireguard:" "$EXPORT_DIR/project/docker-compose.yml" 2>/dev/null; then
-    echo "    ✅ docker-compose.yml содержит WireGuard сервис"
-    # Проверяем что WireGuard сервис имеет NET_ADMIN
-    if grep -A 10 "wireguard:" "$EXPORT_DIR/project/docker-compose.yml" 2>/dev/null | grep -q "NET_ADMIN"; then
-        echo "    ✅ WireGuard сервис имеет NET_ADMIN capability"
-    else
-        echo "    ⚠️  Предупреждение: WireGuard сервис не имеет NET_ADMIN!"
-    fi
-else
-    echo "    ⚠️  Предупреждение: docker-compose.yml не содержит WireGuard сервиса!"
-fi
-
-# Проверяем что директория wg/ скопирована
-if [ -d "$EXPORT_DIR/project/wg" ]; then
-    echo "    ✅ Директория wg/ скопирована в экспорт"
-else
-    echo "    ⚠️  Предупреждение: Директория wg/ не скопирована (создастся при развертывании)"
-fi
 
 echo "✅ Файлы проекта скопированы"
 echo ""
@@ -270,50 +201,20 @@ BotTGDomains - Offline Deployment Package
 
 Этот архив содержит все необходимое для развертывания BotTGDomains на VM без интернета.
 
-СОДЕРЖИМОЕ:
-- images/          - Docker образы (tar файлы)
-- project/         - Исходный код проекта
-- deploy.sh        - Скрипт автоматического развертывания
-
-ИНСТРУКЦИЯ ПО РАЗВЕРТЫВАНИЮ:
-
-1. Распакуйте архив на целевой VM:
+1. Распакуйте архив:
    tar -xzf bottgdomains-offline-*.tar.gz
 
-2. Перейдите в директорию проекта:
+2. Перейдите в директорию project:
    cd bottgdomains-offline-*/project
 
 3. Запустите скрипт развертывания:
    ./deploy.sh
 
-Или выполните шаги вручную:
-
-1. Загрузите Docker образы:
+Или вручную:
    docker load -i ../images/gostsslcheck.tar
    docker load -i ../images/tgscanner.tar
-
-2. Создайте файл .env:
-   cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
-   # Отредактируйте .env и укажите TG_TOKEN и ADMIN_ID
-
-3. Создайте директорию для данных:
-   mkdir -p data
-
-4. Запустите сервисы:
+   docker load -i ../images/wireguard.tar
    docker-compose up -d
-
-5. Проверьте статус:
-   docker-compose ps
-   docker-compose logs -f tgscanner
-
-ТРЕБОВАНИЯ:
-- Docker 20.10+
-- Docker Compose 2.0+
-- Linux система
-- Минимум 5 GB свободного места на диске
-
-ПОДДЕРЖКА:
-См. DEPLOYMENT_OFFLINE.md для подробных инструкций.
 EOF
 
 echo "📝 Создан README_DEPLOYMENT.txt"
@@ -323,8 +224,6 @@ echo ""
 echo "🗜️  Шаг 6: Создание архива..."
 cd "$EXPORT_DIR"
 tar -czf "$PROJECT_ROOT/$ARCHIVE_NAME" images/ project/
-
-# Проверяем размер архива
 ARCHIVE_SIZE=$(du -h "$PROJECT_ROOT/$ARCHIVE_NAME" | cut -f1)
 
 echo ""
@@ -341,25 +240,9 @@ if command -v sha256sum &> /dev/null; then
 elif command -v shasum &> /dev/null; then
     shasum -a 256 "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
     echo "✅ Checksum создан: $ARCHIVE_NAME.sha256"
-else
-    echo "⚠️  Предупреждение: Не удалось создать checksum (sha256sum/shasum не найден)"
 fi
 
 echo ""
 echo "=========================================="
 echo "✅ Сборка и экспорт завершены успешно!"
 echo "=========================================="
-echo ""
-echo "📦 Архив готов: $ARCHIVE_NAME"
-echo "📁 Расположение: $PROJECT_ROOT"
-echo ""
-echo "📋 Следующие шаги:"
-echo "1. Перенесите архив на целевую VM через SFTP"
-echo "2. Распакуйте архив: tar -xzf $ARCHIVE_NAME"
-echo "3. Перейдите в project/ и запустите ./deploy.sh"
-echo ""
-echo "💡 Для проверки целостности архива:"
-if [ -f "$ARCHIVE_NAME.sha256" ]; then
-    echo "   sha256sum -c $ARCHIVE_NAME.sha256"
-fi
-echo ""

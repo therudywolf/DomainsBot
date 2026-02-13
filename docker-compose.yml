@@ -90,6 +90,7 @@ services:
       - WG_CONTAINER_NAME=wireguard
     volumes:
       - ./data:/app/data
+      - ./wg:/app/wg:ro
     networks:
       - default  # Для доступа к gostsslcheck контейнерам
       - wg_network  # Для доступа к WireGuard контейнеру
