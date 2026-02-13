@@ -5,8 +5,19 @@ REM Скрипт сборки и экспорта Docker образов для o
 REM Использование: scripts\build-and-export.bat
 
 set SCRIPT_DIR=%~dp0
-set PROJECT_ROOT=%SCRIPT_DIR%..
+REM Убираем завершающий слэш если есть
+set SCRIPT_DIR=%SCRIPT_DIR:~0,-1%
+set PROJECT_ROOT=%SCRIPT_DIR%\..
 cd /d "%PROJECT_ROOT%"
+
+REM Проверяем, что мы в правильной директории
+if not exist "docker-compose.yml" (
+    echo [ERROR] Не удалось найти docker-compose.yml
+    echo [INFO] Текущая директория: %CD%
+    echo [INFO] Ожидаемая директория: %PROJECT_ROOT%
+    pause
+    exit /b 1
+)
 
 set EXPORT_DIR=%PROJECT_ROOT%\export
 set ARCHIVE_NAME=bottgdomains-offline-%date:~-4,4%%date:~-7,2%%date:~-10,2%-%time:~0,2%%time:~3,2%%time:~6,2%.tar.gz
@@ -60,6 +71,8 @@ mkdir "%EXPORT_DIR%\images"
 mkdir "%EXPORT_DIR%\project"
 
 echo [OK] Директория создана: %EXPORT_DIR%
+echo [INFO] Текущая рабочая директория: %CD%
+echo [INFO] Директория экспорта: %EXPORT_DIR%
 echo.
 
 REM Экспорт образов
@@ -101,22 +114,157 @@ echo.
 
 REM Копируем файлы проекта
 echo [4/6] Копирование файлов проекта...
+echo.
 
-copy docker-compose.yml "%EXPORT_DIR%\project\" >nul
-xcopy /E /I /Y tg_domain_scanner_final "%EXPORT_DIR%\project\tg_domain_scanner_final\" >nul
-xcopy /E /I /Y GostSSLCheck "%EXPORT_DIR%\project\GostSSLCheck\" >nul
-copy scripts\deploy.sh "%EXPORT_DIR%\project\" >nul
+REM Проверяем наличие исходных файлов
+if not exist "docker-compose.yml" (
+    echo [ERROR] docker-compose.yml не найден в %PROJECT_ROOT%
+    pause
+    exit /b 1
+)
 
-if exist "DEPLOYMENT_OFFLINE.md" copy DEPLOYMENT_OFFLINE.md "%EXPORT_DIR%\project\" >nul
-if exist "README.md" copy README.md "%EXPORT_DIR%\project\" >nul
-if exist "tg_domain_scanner_final\.env.example" copy tg_domain_scanner_final\.env.example "%EXPORT_DIR%\project\tg_domain_scanner_final\" >nul
+if not exist "tg_domain_scanner_final" (
+    echo [ERROR] Директория tg_domain_scanner_final не найдена в %PROJECT_ROOT%
+    pause
+    exit /b 1
+)
+
+if not exist "GostSSLCheck" (
+    echo [ERROR] Директория GostSSLCheck не найдена в %PROJECT_ROOT%
+    pause
+    exit /b 1
+)
+
+echo   - Копирование docker-compose.yml...
+copy docker-compose.yml "%EXPORT_DIR%\project\"
+if errorlevel 1 (
+    echo [ERROR] Ошибка при копировании docker-compose.yml
+    pause
+    exit /b 1
+)
+echo     [OK] docker-compose.yml скопирован
+
+echo   - Копирование tg_domain_scanner_final...
+xcopy /E /I /Y /H /Q tg_domain_scanner_final "%EXPORT_DIR%\project\tg_domain_scanner_final\"
+if errorlevel 1 (
+    echo [ERROR] Ошибка при копировании tg_domain_scanner_final
+    echo [INFO] Попытка альтернативного копирования...
+    robocopy tg_domain_scanner_final "%EXPORT_DIR%\project\tg_domain_scanner_final" /E /NFL /NDL /NJH /NJS
+    if errorlevel 8 (
+        echo [ERROR] Не удалось скопировать tg_domain_scanner_final
+        pause
+        exit /b 1
+    )
+)
+REM Проверяем что файлы скопировались
+if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\bot.py" (
+    echo     [OK] tg_domain_scanner_final скопирован (проверен bot.py)
+) else (
+    echo     [WARNING] bot.py не найден в скопированной директории
+)
+
+echo   - Копирование GostSSLCheck...
+xcopy /E /I /Y /H /Q GostSSLCheck "%EXPORT_DIR%\project\GostSSLCheck\"
+if errorlevel 1 (
+    echo [ERROR] Ошибка при копировании GostSSLCheck
+    echo [INFO] Попытка альтернативного копирования...
+    robocopy GostSSLCheck "%EXPORT_DIR%\project\GostSSLCheck" /E /NFL /NDL /NJH /NJS
+    if errorlevel 8 (
+        echo [ERROR] Не удалось скопировать GostSSLCheck
+        pause
+        exit /b 1
+    )
+)
+REM Проверяем что файлы скопировались
+if exist "%EXPORT_DIR%\project\GostSSLCheck\server.py" (
+    echo     [OK] GostSSLCheck скопирован (проверен server.py)
+) else (
+    echo     [WARNING] server.py не найден в скопированной директории
+)
+
+echo   - Копирование deploy.sh...
+if exist "scripts\deploy.sh" (
+    copy scripts\deploy.sh "%EXPORT_DIR%\project\"
+    if errorlevel 1 (
+        echo [WARNING] Не удалось скопировать deploy.sh
+    ) else (
+        echo     [OK] deploy.sh скопирован
+    )
+) else (
+    echo     [WARNING] scripts\deploy.sh не найден
+)
+
+if exist "DEPLOYMENT_OFFLINE.md" (
+    echo   - Копирование DEPLOYMENT_OFFLINE.md...
+    copy DEPLOYMENT_OFFLINE.md "%EXPORT_DIR%\project\"
+    if errorlevel 1 (
+        echo     [WARNING] Не удалось скопировать DEPLOYMENT_OFFLINE.md
+    ) else (
+        echo     [OK] DEPLOYMENT_OFFLINE.md скопирован
+    )
+)
+
+if exist "README.md" (
+    echo   - Копирование README.md...
+    copy README.md "%EXPORT_DIR%\project\"
+    if errorlevel 1 (
+        echo     [WARNING] Не удалось скопировать README.md
+    ) else (
+        echo     [OK] README.md скопирован
+    )
+)
+
+if exist "tg_domain_scanner_final\.env.example" (
+    echo   - Копирование .env.example...
+    copy tg_domain_scanner_final\.env.example "%EXPORT_DIR%\project\tg_domain_scanner_final\"
+    if errorlevel 1 (
+        echo     [WARNING] Не удалось скопировать .env.example
+    ) else (
+        echo     [OK] .env.example скопирован
+    )
+)
 
 REM Удаляем ненужные файлы
-if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\data" rmdir /s /q "%EXPORT_DIR%\project\tg_domain_scanner_final\data"
-for /d /r "%EXPORT_DIR%\project" %%d in (__pycache__) do @if exist "%%d" rmdir /s /q "%%d"
-for /r "%EXPORT_DIR%\project" %%f in (*.pyc) do @if exist "%%f" del /q "%%f"
+echo   - Очистка ненужных файлов...
+if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\data" (
+    rmdir /s /q "%EXPORT_DIR%\project\tg_domain_scanner_final\data" 2>nul
+    echo     [OK] Удалена директория data/
+)
 
+REM Удаляем __pycache__
+for /d /r "%EXPORT_DIR%\project" %%d in (__pycache__) do @if exist "%%d" (
+    rmdir /s /q "%%d" 2>nul
+)
+echo     [OK] Удалены __pycache__ директории
+
+REM Удаляем .pyc файлы
+for /r "%EXPORT_DIR%\project" %%f in (*.pyc) do @if exist "%%f" del /q "%%f" 2>nul
+echo     [OK] Удалены .pyc файлы
+
+echo.
 echo [OK] Файлы проекта скопированы
+
+REM Проверяем, что файлы действительно скопировались
+echo.
+echo [INFO] Проверка скопированных файлов...
+if exist "%EXPORT_DIR%\project\docker-compose.yml" (
+    echo   [OK] docker-compose.yml найден
+) else (
+    echo   [ERROR] docker-compose.yml НЕ найден в экспорте!
+)
+
+if exist "%EXPORT_DIR%\project\tg_domain_scanner_final" (
+    echo   [OK] tg_domain_scanner_final найден
+) else (
+    echo   [ERROR] tg_domain_scanner_final НЕ найден в экспорте!
+)
+
+if exist "%EXPORT_DIR%\project\GostSSLCheck" (
+    echo   [OK] GostSSLCheck найден
+) else (
+    echo   [ERROR] GostSSLCheck НЕ найден в экспорте!
+)
+
 echo.
 
 REM Создаем README для экспорта
@@ -221,5 +369,22 @@ echo 1. Перенесите архив на целевую VM через SFTP
 echo 2. Распакуйте архив: tar -xzf %ARCHIVE_NAME%
 echo 3. Перейдите в project/ и запустите ./deploy.sh
 echo.
+echo [INFO] Проверка содержимого export директории:
+if exist "%EXPORT_DIR%\images" (
+    echo   [OK] Директория images/ существует
+    dir /b "%EXPORT_DIR%\images" 2>nul
+) else (
+    echo   [ERROR] Директория images/ не найдена!
+)
 
+if exist "%EXPORT_DIR%\project" (
+    echo   [OK] Директория project/ существует
+    echo   [INFO] Содержимое project/:
+    dir /b "%EXPORT_DIR%\project" 2>nul
+) else (
+    echo   [ERROR] Директория project/ не найдена!
+)
+echo.
+
+pause
 endlocal
