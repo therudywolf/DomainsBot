@@ -26,7 +26,7 @@ from cryptography.x509.oid import NameOID
 
 from utils.cache import ttl_cache
 from config import settings
-from utils.wireguard_utils import ensure_wg_interface_up, get_wg_interface_ip
+from utils.wireguard_utils import ensure_wg_interface_up
 
 logger = logging.getLogger(__name__)
 

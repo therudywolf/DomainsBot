@@ -179,20 +179,20 @@ echo "📋 Шаг 5: Копирование файлов проекта..."
 # Копируем основные файлы и директории
 # ВАЖНО: Используем docker-compose.yml из корня (с правильными путями для экспорта)
 cp docker-compose.yml "$EXPORT_DIR/project/"
-# Копируем tg_domain_scanner_final (включает Dockerfile с wireguard-tools и все утилиты)
+# Копируем tg_domain_scanner_final (включает Dockerfile и все утилиты)
 cp -r tg_domain_scanner_final "$EXPORT_DIR/project/"
 # Исключаем внутренний docker-compose.yml из tg_domain_scanner_final (используем корневой)
 rm -f "$EXPORT_DIR/project/tg_domain_scanner_final/docker-compose.yml" 2>/dev/null || true
 cp -r GostSSLCheck "$EXPORT_DIR/project/"
 
 # Копируем директорию wg/ если она существует (для WireGuard конфига)
-# Теперь конфиг встроен в образ, но копируем его для справки/резервной копии
+# Конфиг монтируется в WireGuard контейнер через volume
 if [ -d "wg" ]; then
     echo "  - Копирование директории wg/..."
     mkdir -p "$EXPORT_DIR/project/wg"
-    # Копируем все файлы включая конфиг (он уже в образе, но может понадобиться для обновления)
+    # Копируем все файлы включая конфиг (монтируется в WireGuard контейнер)
     cp -r wg/* "$EXPORT_DIR/project/wg/" 2>/dev/null || true
-    echo "    ✅ Директория wg/ скопирована (конфиг уже встроен в образ)"
+    echo "    ✅ Директория wg/ скопирована (конфиг монтируется в WireGuard контейнер)"
 fi
 
 # Копируем скрипты развертывания
@@ -232,18 +232,24 @@ else
     echo "    ✅ wireguard_utils.py найден в экспорте"
 fi
 
-# Проверяем что Dockerfile содержит wireguard-tools
+# Проверяем что Dockerfile НЕ содержит wireguard-tools (теперь WireGuard в отдельном контейнере)
 if grep -q "wireguard-tools" "$EXPORT_DIR/project/tg_domain_scanner_final/Dockerfile" 2>/dev/null; then
-    echo "    ✅ Dockerfile содержит wireguard-tools"
+    echo "    ⚠️  Предупреждение: Dockerfile содержит wireguard-tools (должен быть удален, WireGuard теперь в отдельном контейнере)"
 else
-    echo "    ⚠️  Предупреждение: Dockerfile не содержит wireguard-tools!"
+    echo "    ✅ Dockerfile не содержит wireguard-tools (правильно, WireGuard в отдельном контейнере)"
 fi
 
-# Проверяем что docker-compose.yml содержит настройки WireGuard
-if grep -q "NET_ADMIN\|/dev/net/tun" "$EXPORT_DIR/project/docker-compose.yml" 2>/dev/null; then
-    echo "    ✅ docker-compose.yml содержит настройки WireGuard (NET_ADMIN, /dev/net/tun)"
+# Проверяем что docker-compose.yml содержит WireGuard сервис
+if grep -q "wireguard:" "$EXPORT_DIR/project/docker-compose.yml" 2>/dev/null; then
+    echo "    ✅ docker-compose.yml содержит WireGuard сервис"
+    # Проверяем что WireGuard сервис имеет NET_ADMIN
+    if grep -A 10 "wireguard:" "$EXPORT_DIR/project/docker-compose.yml" 2>/dev/null | grep -q "NET_ADMIN"; then
+        echo "    ✅ WireGuard сервис имеет NET_ADMIN capability"
+    else
+        echo "    ⚠️  Предупреждение: WireGuard сервис не имеет NET_ADMIN!"
+    fi
 else
-    echo "    ⚠️  Предупреждение: docker-compose.yml не содержит настроек WireGuard!"
+    echo "    ⚠️  Предупреждение: docker-compose.yml не содержит WireGuard сервиса!"
 fi
 
 # Проверяем что директория wg/ скопирована

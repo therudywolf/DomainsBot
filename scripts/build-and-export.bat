@@ -407,13 +407,13 @@ if exist "%EXPORT_DIR%\project\GostSSLCheck\server.py" (
 )
 
 REM Копируем директорию wg/ если она существует (для WireGuard конфига)
-REM Теперь конфиг встроен в образ, но копируем его для справки/резервной копии
+REM Конфиг монтируется в WireGuard контейнер через volume
 if exist "wg" (
     echo   - Копирование директории wg/...
     if not exist "%EXPORT_DIR%\project\wg" mkdir "%EXPORT_DIR%\project\wg"
-    REM Копируем все файлы включая конфиг (он уже в образе, но может понадобиться для обновления)
+    REM Копируем все файлы включая конфиг (монтируется в WireGuard контейнер)
     xcopy /E /I /Y "wg\*" "%EXPORT_DIR%\project\wg\" >nul 2>&1
-    echo     [OK] Директория wg/ скопирована (конфиг уже встроен в образ)
+    echo     [OK] Директория wg/ скопирована (конфиг монтируется в WireGuard контейнер)
 )
 
 echo   - Копирование deploy.sh...
@@ -493,20 +493,27 @@ if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\utils\wireguard_utils.py"
     echo     [WARNING] wireguard_utils.py НЕ найден в экспорте!
 )
 
-REM Проверяем что Dockerfile содержит wireguard-tools
+REM Проверяем что Dockerfile НЕ содержит wireguard-tools (теперь WireGuard в отдельном контейнере)
 findstr /C:"wireguard-tools" "%EXPORT_DIR%\project\tg_domain_scanner_final\Dockerfile" >nul 2>&1
 if not errorlevel 1 (
-    echo     [OK] Dockerfile содержит wireguard-tools
+    echo     [WARNING] Dockerfile содержит wireguard-tools (должен быть удален, WireGuard теперь в отдельном контейнере)
 ) else (
-    echo     [WARNING] Dockerfile не содержит wireguard-tools!
+    echo     [OK] Dockerfile не содержит wireguard-tools (правильно, WireGuard в отдельном контейнере)
 )
 
-REM Проверяем что docker-compose.yml содержит настройки WireGuard
-findstr /C:"NET_ADMIN" "%EXPORT_DIR%\project\docker-compose.yml" >nul 2>&1
+REM Проверяем что docker-compose.yml содержит WireGuard сервис
+findstr /C:"wireguard:" "%EXPORT_DIR%\project\docker-compose.yml" >nul 2>&1
 if not errorlevel 1 (
-    echo     [OK] docker-compose.yml содержит настройки WireGuard (NET_ADMIN, /dev/net/tun)
+    echo     [OK] docker-compose.yml содержит WireGuard сервис
+    REM Проверяем что WireGuard сервис имеет NET_ADMIN
+    findstr /C:"NET_ADMIN" "%EXPORT_DIR%\project\docker-compose.yml" >nul 2>&1
+    if not errorlevel 1 (
+        echo     [OK] WireGuard сервис имеет NET_ADMIN capability
+    ) else (
+        echo     [WARNING] WireGuard сервис не имеет NET_ADMIN!
+    )
 ) else (
-    echo     [WARNING] docker-compose.yml не содержит настроек WireGuard!
+    echo     [WARNING] docker-compose.yml не содержит WireGuard сервиса!
 )
 
 REM Проверяем что директория wg/ скопирована
