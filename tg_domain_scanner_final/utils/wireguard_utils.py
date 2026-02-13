@@ -26,18 +26,48 @@ _WG_INTERFACE_IP: Optional[str] = None
 def _get_wg_config_path() -> Path:
     """Получает абсолютный путь к конфигу WireGuard.
     
+    Ищет конфиг в нескольких местах:
+    1. Абсолютный путь (если указан через переменную окружения)
+    2. Относительно корня репозитория (для разработки)
+    3. Внутри контейнера (/app/wg/TGBOT.conf)
+    4. В текущей рабочей директории
+    
     Returns:
-        Path к конфигу WireGuard
+        Path к конфигу WireGuard или Path к несуществующему файлу
     """
     config_path = Path(_WG_CONFIG_PATH)
+    
+    # Если абсолютный путь - возвращаем как есть
     if config_path.is_absolute():
         return config_path
     
-    # Если путь относительный, ищем от корня репозитория
-    # Предполагаем, что модуль находится в tg_domain_scanner_final/utils/
-    # Корень репозитория на 2 уровня выше
+    # Список мест для поиска конфига
+    search_paths = []
+    
+    # 1. Относительно корня репозитория (для разработки на хосте)
+    # Модуль находится в tg_domain_scanner_final/utils/, корень на 2 уровня выше
     repo_root = Path(__file__).resolve().parent.parent.parent
-    return repo_root / config_path
+    search_paths.append(repo_root / config_path)
+    
+    # 2. Внутри Docker контейнера (если запущено в контейнере)
+    # WORKDIR в Dockerfile = /app
+    search_paths.append(Path("/app") / config_path)
+    
+    # 3. Относительно текущей рабочей директории
+    search_paths.append(Path.cwd() / config_path)
+    
+    # 4. Относительно директории модуля
+    search_paths.append(Path(__file__).resolve().parent.parent / config_path)
+    
+    # Ищем первый существующий файл
+    for path in search_paths:
+        if path.exists() and path.is_file():
+            logger.debug(f"Конфиг WireGuard найден: {path}")
+            return path
+    
+    # Если не найден, возвращаем первый путь (для логирования ошибок)
+    logger.debug(f"Конфиг WireGuard не найден. Проверялись пути: {search_paths}")
+    return search_paths[0]
 
 
 def _parse_wg_config() -> tuple[Optional[str], Optional[str]]:

@@ -166,6 +166,20 @@ cp docker-compose.yml "$EXPORT_DIR/project/"
 cp -r tg_domain_scanner_final "$EXPORT_DIR/project/"
 cp -r GostSSLCheck "$EXPORT_DIR/project/"
 
+# Копируем директорию wg/ если она существует (для WireGuard конфига)
+if [ -d "wg" ]; then
+    echo "  - Копирование директории wg/..."
+    mkdir -p "$EXPORT_DIR/project/wg"
+    # Копируем все файлы кроме конфига (он должен быть создан вручную на целевой системе)
+    if [ -f "wg/TGBOT.conf" ]; then
+        echo "    ⚠️  Предупреждение: TGBOT.conf найден, но не будет скопирован (безопасность)"
+        echo "    ⚠️  Создайте конфиг WireGuard вручную на целевой системе в wg/TGBOT.conf"
+    fi
+    # Копируем другие файлы из wg/ если есть
+    find wg -type f ! -name "TGBOT.conf" -exec cp --parents {} "$EXPORT_DIR/project/" \; 2>/dev/null || true
+    echo "    ✅ Директория wg/ скопирована (без конфига)"
+fi
+
 # Копируем скрипты развертывания
 if [ -f "scripts/deploy.sh" ]; then
     cp scripts/deploy.sh "$EXPORT_DIR/project/"
@@ -194,6 +208,13 @@ rm -rf "$EXPORT_DIR/project/tg_domain_scanner_final/__pycache__" 2>/dev/null || 
 rm -rf "$EXPORT_DIR/project/tg_domain_scanner_final/**/__pycache__" 2>/dev/null || true
 find "$EXPORT_DIR/project" -name "*.pyc" -delete 2>/dev/null || true
 find "$EXPORT_DIR/project" -name ".pytest_cache" -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Проверяем наличие wireguard_utils.py
+if [ ! -f "$EXPORT_DIR/project/tg_domain_scanner_final/utils/wireguard_utils.py" ]; then
+    echo "  ⚠️  Предупреждение: wireguard_utils.py не найден в экспорте!"
+else
+    echo "  ✅ wireguard_utils.py найден в экспорте"
+fi
 
 echo "✅ Файлы проекта скопированы"
 echo ""

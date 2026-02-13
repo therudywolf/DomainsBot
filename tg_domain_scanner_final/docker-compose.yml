@@ -60,3 +60,6 @@ services:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
     volumes:
       - ./data:/app/data
+      # Монтируем директорию wg/ для доступа к конфигу WireGuard (если существует)
+      # Путь работает и в разработке (../wg) и в экспорте (./wg)
+      - ../wg:/app/wg:ro

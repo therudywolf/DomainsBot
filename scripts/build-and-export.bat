@@ -383,6 +383,24 @@ if exist "%EXPORT_DIR%\project\GostSSLCheck\server.py" (
     exit /b 1
 )
 
+REM Копируем директорию wg/ если она существует (для WireGuard конфига)
+if exist "wg" (
+    echo   - Копирование директории wg/...
+    if not exist "%EXPORT_DIR%\project\wg" mkdir "%EXPORT_DIR%\project\wg"
+    REM Копируем все файлы кроме конфига (он должен быть создан вручную на целевой системе)
+    if exist "wg\TGBOT.conf" (
+        echo     [WARNING] TGBOT.conf найден, но не будет скопирован (безопасность)
+        echo     [WARNING] Создайте конфиг WireGuard вручную на целевой системе в wg\TGBOT.conf
+    )
+    REM Копируем другие файлы из wg/ если есть (исключая TGBOT.conf)
+    for %%f in (wg\*) do (
+        if /i not "%%~nxf"=="TGBOT.conf" (
+            copy "%%f" "%EXPORT_DIR%\project\wg\" >nul 2>&1
+        )
+    )
+    echo     [OK] Директория wg/ скопирована (без конфига)
+)
+
 echo   - Копирование deploy.sh...
 if exist "scripts\deploy.sh" (
     copy scripts\deploy.sh "%EXPORT_DIR%\project\"
@@ -451,6 +469,13 @@ echo     [OK] Удалены __pycache__ директории
 REM Удаляем .pyc файлы
 for /r "%EXPORT_DIR%\project" %%f in (*.pyc) do @if exist "%%f" del /q "%%f" 2>nul
 echo     [OK] Удалены .pyc файлы
+
+REM Проверяем наличие wireguard_utils.py
+if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\utils\wireguard_utils.py" (
+    echo     [OK] wireguard_utils.py найден в экспорте
+) else (
+    echo     [WARNING] wireguard_utils.py НЕ найден в экспорте!
+)
 
 echo.
 echo [OK] Файлы проекта скопированы
