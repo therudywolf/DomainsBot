@@ -84,6 +84,54 @@ class TestNormalizeDomains:
         domains = ["example.com", "example.com", "test.ru"]
         result = normalize_domains(domains)
         assert result == ["example.com", "test.ru"] or result == ["test.ru", "example.com"]
+    
+    def test_talent_mos_ru(self):
+        """Тест домена talent.mos.ru с протоколом."""
+        assert normalize_domain("https://talent.mos.ru") == "talent.mos.ru"
+        assert normalize_domain("http://talent.mos.ru") == "talent.mos.ru"
+        assert normalize_domain("talent.mos.ru") == "talent.mos.ru"
+    
+    def test_domain_with_various_protocols(self):
+        """Тест доменов с различными протоколами."""
+        assert normalize_domain("ftp://example.com") == "example.com"
+        assert normalize_domain("ws://example.com") == "example.com"
+        assert normalize_domain("tcp://example.com") == "example.com"
+    
+    def test_domain_with_complex_path(self):
+        """Тест домена со сложным путем."""
+        assert normalize_domain("https://example.com/path/to/page?param=value&other=123#anchor") == "example.com"
+    
+    def test_domain_with_unicode(self):
+        """Тест домена с Unicode символами (если поддерживается)."""
+        # Проверяем, что функция не падает на Unicode
+        result = normalize_domain("https://пример.рф")
+        # Может вернуть None или Punycode в зависимости от наличия idna
+        assert result is None or isinstance(result, str)
+    
+    def test_domain_with_trailing_slash(self):
+        """Тест домена с завершающим слэшем."""
+        assert normalize_domain("https://example.com/") == "example.com"
+    
+    def test_domain_with_multiple_slashes(self):
+        """Тест домена с множественными слэшами."""
+        assert normalize_domain("https://example.com///path") == "example.com"
+    
+    def test_domain_with_spaces(self):
+        """Тест домена с пробелами (должен очищаться)."""
+        assert normalize_domain("  https://example.com  ") == "example.com"
+        assert normalize_domain("example.com ") == "example.com"
+    
+    def test_domain_with_special_chars_in_path(self):
+        """Тест домена со специальными символами в пути."""
+        assert normalize_domain("https://example.com/path%20with%20spaces") == "example.com"
+    
+    def test_invalid_domains_edge_cases(self):
+        """Тест некорректных доменов - edge cases."""
+        assert normalize_domain("http://") is None
+        assert normalize_domain("https://") is None
+        assert normalize_domain("://example.com") is None
+        assert normalize_domain("example") is None  # Нет TLD
+        assert normalize_domain(".example.com") is None  # Точка в начале
 
 
 

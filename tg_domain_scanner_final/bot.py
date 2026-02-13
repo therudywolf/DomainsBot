@@ -3092,10 +3092,115 @@ async def admin_add_access(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.add_access_waiting)
     await callback.message.answer(
         "📝 Введите TG ID пользователя(ей).\n\n"
-        "Можно вводить несколько через пробел или запятую:\n"
-        "`123456789 987654321 444555666`"
+        "Поддерживаемые форматы:\n"
+        "• Простые числа: `123456789 987654321`\n"
+        "• Формат ID: `ID: 123456789`\n"
+        "• Формат старого бота:\n"
+        "`• ID: 123456789 - добавлен 2025-12-09`\n\n"
+        "Можно вставлять список из старого бота целиком!"
     )
     await callback.answer()
+
+
+def parse_user_list(text: str) -> List[Tuple[int, Optional[str]]]:
+    """
+    Парсит список пользователей из различных форматов.
+    
+    Поддерживаемые форматы:
+    - Формат старого бота: "• ID: 1027582338 - добавлен 2025-12-09"
+    - Формат с ID: "ID: 1027582338"
+    - Простые числа: "1027582338"
+    - Несколько чисел через пробел/запятую: "1027582338 127163336"
+    
+    Args:
+        text: Текст со списком пользователей
+        
+    Returns:
+        Список кортежей (user_id, date_added), где date_added может быть None
+    """
+    users = []
+    
+    if not text:
+        return users
+    
+    # Регулярное выражение для формата старого бота: "• ID: 123456 - добавлен YYYY-MM-DD"
+    old_bot_format = re.compile(
+        r'(?:^|\n)[•\-\*]\s*ID:\s*(\d+)\s*(?:-\s*добавлен\s+(\d{4}-\d{2}-\d{2}))?',
+        re.IGNORECASE | re.MULTILINE
+    )
+    
+    # Регулярное выражение для формата "ID: 123456"
+    id_format = re.compile(r'ID:\s*(\d+)', re.IGNORECASE)
+    
+    # Сначала пробуем найти формат старого бота
+    matches = old_bot_format.findall(text)
+    if matches:
+        for user_id_str, date_str in matches:
+            try:
+                user_id = int(user_id_str)
+                users.append((user_id, date_str if date_str else None))
+            except ValueError:
+                continue
+    
+    # Если не нашли формат старого бота, пробуем формат "ID: 123456"
+    if not users:
+        matches = id_format.findall(text)
+        for user_id_str in matches:
+            try:
+                user_id = int(user_id_str)
+                users.append((user_id, None))
+            except ValueError:
+                continue
+    
+    # Если все еще ничего не нашли, пробуем простые числа
+    if not users:
+        # Разбиваем на строки и ищем числа
+        lines = text.split('\n')
+        for line in lines:
+            # Пропускаем заголовки и пустые строки
+            line = line.strip()
+            if not line or any(keyword in line.lower() for keyword in ['список', 'доступ', 'пользовател']):
+                continue
+            
+            # Ищем числа в строке
+            numbers = re.findall(r'\b\d{8,}\b', line)  # Минимум 8 цифр для Telegram ID
+            for num_str in numbers:
+                try:
+                    user_id = int(num_str)
+                    users.append((user_id, None))
+                except ValueError:
+                    continue
+    
+    # Если все еще ничего не нашли, пробуем простой парсинг через пробелы/запятые
+    if not users:
+        items = re.split(r'[\s,;]+', text.strip())
+        for item in items:
+            item = item.strip()
+            if not item:
+                continue
+            
+            # Пропускаем никнеймы
+            if item.startswith("@"):
+                continue
+            
+            # Пытаемся распарсить как число
+            try:
+                user_id = int(item)
+                # Проверяем, что это похоже на Telegram ID (обычно 8+ цифр)
+                if user_id >= 100000000:  # Минимум 9 цифр
+                    users.append((user_id, None))
+            except ValueError:
+                continue
+    
+    # Удаляем дубликаты, сохраняя порядок
+    seen = set()
+    unique_users = []
+    for user_id, date_added in users:
+        if user_id not in seen:
+            seen.add(user_id)
+            unique_users.append((user_id, date_added))
+    
+    return unique_users
 
 
 @router.message(AdminStates.add_access_waiting)
@@ -3105,31 +3210,47 @@ async def process_add_access(message: types.Message, state: FSMContext):
         return
     
     text = message.text or ""
-    # Парсим TG ID
-    items = re.split(r"[\s,]+", text.strip())
+    
+    # Используем новый парсер списка пользователей
+    parsed_users = parse_user_list(text)
     
     added_count = 0
     errors = []
     added_users = []
     
-    for item in items:
-        if not item:
-            continue
-        
-        # Если начинается с @, то это никнейм - пропускаем (нужен ID)
-        if item.startswith("@"):
-            errors.append(f"⚠️ {item} - Требуется TG ID, не никнейм")
-            continue
-        
-        # Пытаемся распарсить как число
+    for user_id, date_added in parsed_users:
         try:
-            user_id = int(item)
             username = ""
             add_access(user_id, username)
             added_count += 1
             added_users.append(user_id)
-        except ValueError:
-            errors.append(f"❌ {item} - Некорректный формат")
+        except Exception as e:
+            errors.append(f"❌ {user_id} - Ошибка при добавлении: {str(e)}")
+    
+    # Если парсер ничего не нашел, пробуем старый способ (для обратной совместимости)
+    if not parsed_users:
+        items = re.split(r"[\s,]+", text.strip())
+        
+        for item in items:
+            if not item:
+                continue
+            
+            # Если начинается с @, то это никнейм - пропускаем (нужен ID)
+            if item.startswith("@"):
+                errors.append(f"⚠️ {item} - Требуется TG ID, не никнейм")
+                continue
+            
+            # Пытаемся распарсить как число
+            try:
+                user_id = int(item)
+                username = ""
+                add_access(user_id, username)
+                added_count += 1
+                added_users.append(user_id)
+            except ValueError:
+                errors.append(f"❌ {item} - Некорректный формат")
+            except Exception as e:
+                errors.append(f"❌ {item} - Ошибка: {str(e)}")
     
     response = f"✅ Добавлен доступ для {added_count} пользователей(я)"
     if errors:
