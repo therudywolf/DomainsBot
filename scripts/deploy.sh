@@ -75,6 +75,30 @@ else
     fi
     
     echo ""
+    
+    # Проверяем какие образы были загружены и создаем теги для всех сервисов
+    echo "  - Создание тегов для всех сервисов..."
+    
+    # Получаем имя загруженного образа gostsslcheck
+    GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" bottgdomains-gostsslcheck* | head -1)
+    if [ -n "$GOST_IMAGE" ]; then
+        echo "    Найден образ: $GOST_IMAGE"
+        # Создаем теги для всех трех сервисов gostsslcheck
+        docker tag "$GOST_IMAGE" bottgdomains-gostsslcheck1:latest 2>/dev/null || true
+        docker tag "$GOST_IMAGE" bottgdomains-gostsslcheck2:latest 2>/dev/null || true
+        docker tag "$GOST_IMAGE" bottgdomains-gostsslcheck3:latest 2>/dev/null || true
+        echo "    ✅ Теги созданы для gostsslcheck1, gostsslcheck2, gostsslcheck3"
+    fi
+    
+    # Получаем имя загруженного образа tgscanner
+    TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" bottgdomains-tgscanner* | head -1)
+    if [ -n "$TGSCANNER_IMAGE" ]; then
+        echo "    Найден образ: $TGSCANNER_IMAGE"
+        docker tag "$TGSCANNER_IMAGE" bottgdomains-tgscanner:latest 2>/dev/null || true
+        echo "    ✅ Тег создан для tgscanner"
+    fi
+    
+    echo ""
 fi
 
 # Переходим в директорию проекта
@@ -85,6 +109,23 @@ if [ ! -f "docker-compose.yml" ]; then
     echo "❌ Ошибка: docker-compose.yml не найден в $PROJECT_DIR"
     exit 1
 fi
+
+# Создаем docker-compose.override.yml для использования уже загруженных образов
+echo "📝 Создание docker-compose.override.yml для offline развертывания..."
+cat > docker-compose.override.yml << 'EOF'
+version: '3'
+services:
+  gostsslcheck1:
+    image: bottgdomains-gostsslcheck1:latest
+  gostsslcheck2:
+    image: bottgdomains-gostsslcheck2:latest
+  gostsslcheck3:
+    image: bottgdomains-gostsslcheck3:latest
+  tgscanner:
+    image: bottgdomains-tgscanner:latest
+EOF
+echo "✅ docker-compose.override.yml создан"
+echo ""
 
 echo "📁 Шаг 2: Создание необходимых директорий..."
 mkdir -p tg_domain_scanner_final/data
@@ -141,7 +182,9 @@ echo ""
 echo "🚀 Шаг 5: Запуск сервисов..."
 echo ""
 
-$DOCKER_COMPOSE up -d
+# Используем --no-build чтобы не собирать образы заново (они уже загружены)
+# Также используем --pull never чтобы не пытаться скачивать образы из интернета
+$DOCKER_COMPOSE up -d --no-build --pull never
 
 if [ $? -ne 0 ]; then
     echo "❌ Ошибка при запуске сервисов"
@@ -222,4 +265,54 @@ fi
 
 echo ""
 echo "🎉 Готово! Бот должен быть доступен в Telegram."
+echo ""
+
+# Информация об автозапуске
+echo "📋 Информация об автозапуске:"
+echo ""
+echo "  ✅ Контейнеры настроены на автозапуск (restart: unless-stopped)"
+echo "  ✅ Контейнеры запущены в фоновом режиме (docker-compose up -d)"
+echo ""
+echo "  ⚠️  Для автозапуска после перезагрузки системы убедитесь, что:"
+echo "     1. Docker сервис запускается при загрузке:"
+echo "        sudo systemctl enable docker"
+echo "        sudo systemctl start docker"
+echo ""
+echo "     2. (Опционально) Создайте systemd service для автоматического запуска docker-compose:"
+echo "        См. инструкции ниже"
+echo ""
+
+# Предложение создать systemd service
+if command -v systemctl &> /dev/null && [ "$EUID" -eq 0 ]; then
+    echo "  💡 Хотите создать systemd service для автозапуска? (y/n)"
+    read -p "     " CREATE_SERVICE
+    if [ "$CREATE_SERVICE" = "y" ] || [ "$CREATE_SERVICE" = "Y" ]; then
+        SERVICE_FILE="/etc/systemd/system/bottgdomains.service"
+        cat > "$SERVICE_FILE" << EOF
+[Unit]
+Description=BotTGDomains Telegram Bot
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=$PROJECT_DIR
+ExecStart=/usr/bin/docker-compose up -d
+ExecStop=/usr/bin/docker-compose down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+        systemctl enable bottgdomains.service
+        echo "    ✅ Systemd service создан и включен"
+        echo "    📋 Управление:"
+        echo "       sudo systemctl start bottgdomains   # Запуск"
+        echo "       sudo systemctl stop bottgdomains    # Остановка"
+        echo "       sudo systemctl status bottgdomains  # Статус"
+    fi
+fi
+
 echo ""
