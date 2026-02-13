@@ -1,21 +1,23 @@
 """
-Утилиты для управления WireGuard интерфейсом.
+Утилиты для управления WireGuard подключением.
 
+WireGuard теперь работает в отдельном контейнере (masipcat/wireguard-go).
 Используется для альтернативного подключения при массовых 504 ошибках.
 """
 
 import os
-import subprocess
+import socket
 import logging
 import re
-import shutil
-import tempfile
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Путь к конфигу WireGuard (относительно корня репозитория)
+# Имя WireGuard контейнера (из переменной окружения или по умолчанию)
+_WG_CONTAINER_NAME = os.getenv("WG_CONTAINER_NAME", "wireguard")
+
+# Путь к конфигу WireGuard (для чтения информации, не для управления)
 _WG_CONFIG_PATH = os.getenv("WG_CONFIG_PATH", "wg/TGBOT.conf")
 
 # Имя интерфейса из конфига (по умолчанию TGBOT)
@@ -28,11 +30,10 @@ _WG_INTERFACE_IP: Optional[str] = None
 def _get_wg_config_path() -> Path:
     """Получает абсолютный путь к конфигу WireGuard.
     
-    Ищет конфиг в нескольких местах:
+    Ищет конфиг в нескольких местах (для чтения информации):
     1. Абсолютный путь (если указан через переменную окружения)
     2. Относительно корня репозитория (для разработки)
-    3. Внутри контейнера (/app/wg/TGBOT.conf)
-    4. В текущей рабочей директории
+    3. В текущей рабочей директории
     
     Returns:
         Path к конфигу WireGuard или Path к несуществующему файлу
@@ -51,14 +52,10 @@ def _get_wg_config_path() -> Path:
     repo_root = Path(__file__).resolve().parent.parent.parent
     search_paths.append(repo_root / config_path)
     
-    # 2. Внутри Docker контейнера (если запущено в контейнере)
-    # WORKDIR в Dockerfile = /app
-    search_paths.append(Path("/app") / config_path)
-    
-    # 3. Относительно текущей рабочей директории
+    # 2. Относительно текущей рабочей директории
     search_paths.append(Path.cwd() / config_path)
     
-    # 4. Относительно директории модуля
+    # 3. Относительно директории модуля
     search_paths.append(Path(__file__).resolve().parent.parent / config_path)
     
     # Ищем первый существующий файл
@@ -69,7 +66,7 @@ def _get_wg_config_path() -> Path:
     
     # Если не найден, возвращаем первый путь (для логирования ошибок)
     logger.debug(f"Конфиг WireGuard не найден. Проверялись пути: {search_paths}")
-    return search_paths[0]
+    return search_paths[0] if search_paths else Path(_WG_CONFIG_PATH)
 
 
 def _parse_wg_config() -> tuple[Optional[str], Optional[str]]:
@@ -81,7 +78,7 @@ def _parse_wg_config() -> tuple[Optional[str], Optional[str]]:
     config_path = _get_wg_config_path()
     
     if not config_path.exists():
-        logger.warning(f"Конфиг WireGuard не найден: {config_path}")
+        logger.debug(f"Конфиг WireGuard не найден: {config_path}")
         return None, None
     
     try:
@@ -93,7 +90,7 @@ def _parse_wg_config() -> tuple[Optional[str], Optional[str]]:
         if name_match:
             interface_name = name_match.group(1)
         else:
-            # Fallback: имя из имени файла конфига (wg-quick использует это)
+            # Fallback: имя из имени файла конфига
             stem = config_path.stem
             interface_name = stem if stem else _WG_INTERFACE_NAME
         
@@ -105,6 +102,24 @@ def _parse_wg_config() -> tuple[Optional[str], Optional[str]]:
     except Exception as e:
         logger.error(f"Ошибка при парсинге конфига WireGuard {config_path}: {e}")
         return None, None
+
+
+def _check_wg_container_available() -> bool:
+    """Проверяет доступность WireGuard контейнера через Docker сеть.
+    
+    Пытается разрешить имя хоста контейнера через DNS Docker сети.
+    
+    Returns:
+        True если контейнер доступен, False иначе
+    """
+    try:
+        # Пытаемся разрешить имя хоста контейнера
+        # В Docker сети контейнеры доступны по имени контейнера
+        socket.gethostbyname(_WG_CONTAINER_NAME)
+        return True
+    except (socket.gaierror, OSError) as e:
+        logger.debug(f"WireGuard контейнер {_WG_CONTAINER_NAME} недоступен: {e}")
+        return False
 
 
 def get_wg_interface_ip() -> Optional[str]:
@@ -123,27 +138,15 @@ def get_wg_interface_ip() -> Optional[str]:
 
 
 def is_wg_interface_up() -> bool:
-    """Проверяет, поднят ли WireGuard интерфейс.
+    """Проверяет, доступен ли WireGuard контейнер.
+    
+    Теперь WireGuard работает в отдельном контейнере, поэтому проверяем
+    доступность контейнера через Docker сеть.
     
     Returns:
-        True если интерфейс активен, False иначе
+        True если контейнер доступен, False иначе
     """
-    interface_name, _ = _parse_wg_config()
-    if not interface_name:
-        return False
-    
-    try:
-        # Проверяем статус через wg show
-        result = subprocess.run(
-            ["wg", "show", interface_name],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-        logger.debug(f"Ошибка при проверке статуса WireGuard интерфейса {interface_name}: {e}")
-        return False
+    return _check_wg_container_available()
 
 
 def check_wg_connection() -> dict:
@@ -155,8 +158,8 @@ def check_wg_connection() -> dict:
         - config_path: str - путь к конфигу
         - interface_name: str | None
         - interface_ip: str | None
-        - interface_up: bool - поднят ли интерфейс
-        - wg_available: bool - доступны ли wg/wg-quick
+        - interface_up: bool - доступен ли WireGuard контейнер
+        - container_name: str - имя WireGuard контейнера
         - last_error: str | None - последняя ошибка
     """
     result = {
@@ -165,25 +168,9 @@ def check_wg_connection() -> dict:
         "interface_name": None,
         "interface_ip": None,
         "interface_up": False,
-        "wg_available": False,
+        "container_name": _WG_CONTAINER_NAME,
         "last_error": None,
     }
-    
-    # Проверяем доступность wg
-    try:
-        subprocess.run(
-            ["wg", "version"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        result["wg_available"] = True
-    except FileNotFoundError:
-        result["last_error"] = "wg/wg-quick не установлен (WireGuard недоступен)"
-        return result
-    except (subprocess.TimeoutExpired, OSError) as e:
-        result["last_error"] = f"Проверка wg: {e}"
-        return result
     
     config_path = _get_wg_config_path()
     result["config_path"] = str(config_path)
@@ -198,139 +185,40 @@ def check_wg_connection() -> dict:
     result["interface_name"] = interface_name
     result["interface_ip"] = ip_address
     
-    if interface_name:
-        result["interface_up"] = is_wg_interface_up()
+    # Проверяем доступность WireGuard контейнера
+    result["interface_up"] = _check_wg_container_available()
+    
+    if not result["interface_up"]:
+        result["last_error"] = f"WireGuard контейнер {_WG_CONTAINER_NAME} недоступен в Docker сети"
     
     return result
 
 
 def ensure_wg_interface_up() -> bool:
-    """Поднимает WireGuard интерфейс если он не поднят.
+    """Проверяет что WireGuard контейнер доступен.
+    
+    WireGuard теперь работает в отдельном контейнере, который управляется
+    через docker-compose. Эта функция только проверяет доступность контейнера.
     
     Returns:
-        True если интерфейс успешно поднят или уже был поднят, False при ошибке
+        True если контейнер доступен, False при ошибке
     """
-    # Проверяем, не поднят ли уже интерфейс
-    if is_wg_interface_up():
-        logger.debug("WireGuard интерфейс уже поднят")
+    if _check_wg_container_available():
+        logger.debug(f"WireGuard контейнер {_WG_CONTAINER_NAME} доступен")
         return True
-    
-    config_path = _get_wg_config_path()
-    if not config_path.exists():
-        logger.error(f"Конфиг WireGuard не найден: {config_path}")
+    else:
+        logger.warning(f"WireGuard контейнер {_WG_CONTAINER_NAME} недоступен")
         return False
-    
-    # Определяем имя интерфейса из конфига
-    interface_name, _ = _parse_wg_config()
-    if not interface_name:
-        logger.error("Не удалось определить имя интерфейса из конфига WireGuard")
-        return False
-    
-    # Если файловая система read-only, копируем конфиг во временную директорию
-    # wg-quick требует права на чтение конфига, но в Docker контейнерах
-    # конфиг может быть смонтирован как read-only (если переопределен через volume)
-    # По умолчанию конфиг встроен в образ с правильными правами (600)
-    working_config_path = config_path
-    temp_config_path = None
-    
-    try:
-        # Пытаемся установить права доступа к конфигу (wg-quick предпочитает 600)
-        try:
-            os.chmod(config_path, 0o600)
-            logger.debug(f"Права доступа к конфигу WireGuard установлены: 600")
-        except (OSError, PermissionError) as e:
-            # Если не удалось изменить права (read-only FS), копируем во временную директорию
-            logger.debug(f"Не удалось изменить права доступа к конфигу (возможно read-only FS): {e}")
-            
-            # Копируем конфиг во временную директорию с правильными правами
-            temp_dir = Path(tempfile.gettempdir())
-            temp_config_path = temp_dir / config_path.name
-            
-            shutil.copy2(config_path, temp_config_path)
-            os.chmod(temp_config_path, 0o600)
-            working_config_path = temp_config_path
-            logger.debug(f"Конфиг скопирован во временную директорию: {working_config_path}")
-    except Exception as e:
-        logger.warning(f"Не удалось настроить права доступа к конфигу: {e}")
-        # Продолжаем попытку поднять интерфейс с исходным конфигом
-    
-    try:
-        # Поднимаем интерфейс через wg-quick
-        # В Docker контейнерах DNS настраивается автоматически через /etc/resolv.conf
-        # wg-quick должен работать корректно без дополнительных флагов
-        result = subprocess.run(
-            ["wg-quick", "up", str(working_config_path)],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode == 0:
-            logger.info(f"WireGuard интерфейс {interface_name} успешно поднят из конфига {working_config_path}")
-            return True
-        else:
-            error_msg = result.stderr or result.stdout or "Неизвестная ошибка"
-            logger.warning(
-                f"Не удалось поднять WireGuard интерфейс: {error_msg}"
-            )
-            return False
-    except FileNotFoundError:
-        logger.error("Утилита wg-quick не найдена. Установите WireGuard.")
-        return False
-    except subprocess.TimeoutExpired:
-        logger.error("Таймаут при поднятии WireGuard интерфейса")
-        return False
-    except Exception as e:
-        logger.error(f"Ошибка при поднятии WireGuard интерфейса: {e}", exc_info=True)
-        return False
-    finally:
-        # Удаляем временный конфиг если он был создан
-        if temp_config_path and temp_config_path.exists():
-            try:
-                temp_config_path.unlink()
-            except Exception as e:
-                logger.debug(f"Не удалось удалить временный конфиг {temp_config_path}: {e}")
 
 
 def ensure_wg_interface_down() -> bool:
     """Опускает WireGuard интерфейс если он поднят.
     
+    Теперь WireGuard работает в отдельном контейнере, поэтому эта функция
+    не выполняет никаких действий. Контейнер управляется через docker-compose.
+    
     Returns:
-        True если интерфейс успешно опущен или уже был опущен, False при ошибке
+        True (для обратной совместимости)
     """
-    interface_name, _ = _parse_wg_config()
-    if not interface_name:
-        logger.warning("Не удалось определить имя интерфейса WireGuard")
-        return False
-    
-    # Проверяем, не опущен ли уже интерфейс
-    if not is_wg_interface_up():
-        logger.debug("WireGuard интерфейс уже опущен")
-        return True
-    
-    try:
-        # Опускаем интерфейс через wg-quick
-        result = subprocess.run(
-            ["wg-quick", "down", interface_name],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode == 0:
-            logger.info(f"WireGuard интерфейс {interface_name} успешно опущен")
-            return True
-        else:
-            logger.warning(
-                f"Не удалось опустить WireGuard интерфейс {interface_name}: {result.stderr}"
-            )
-            return False
-    except FileNotFoundError:
-        logger.error("Утилита wg-quick не найдена. Установите WireGuard.")
-        return False
-    except subprocess.TimeoutExpired:
-        logger.error("Таймаут при опускании WireGuard интерфейса")
-        return False
-    except Exception as e:
-        logger.error(f"Ошибка при опускании WireGuard интерфейса: {e}", exc_info=True)
-        return False
+    logger.debug("WireGuard работает в отдельном контейнере, управление через docker-compose")
+    return True

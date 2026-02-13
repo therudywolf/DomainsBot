@@ -1,8 +1,40 @@
+networks:
+  default:
+    driver: bridge
+  wg_network:
+    driver: bridge
+
 services:
+  wireguard:
+    image: masipcat/wireguard-go:latest
+    container_name: wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./wg:/etc/wireguard:ro
+    networks:
+      - wg_network
+    sysctls:
+      - net.ipv4.ip_forward=1
+    environment:
+      - WG_CONFIG=/etc/wireguard/TGBOT.conf
+    # Healthcheck через проверку интерфейса
+    healthcheck:
+      test: ["CMD", "wg", "show", "TGBOT"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   gostsslcheck1:
     build: ./GostSSLCheck
     container_name: gostsslcheck1
     restart: unless-stopped
+    networks:
+      - default
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
       interval: 30s
@@ -14,6 +46,8 @@ services:
     build: ./GostSSLCheck
     container_name: gostsslcheck2
     restart: unless-stopped
+    networks:
+      - default
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
       interval: 30s
@@ -25,6 +59,8 @@ services:
     build: ./GostSSLCheck
     container_name: gostsslcheck3
     restart: unless-stopped
+    networks:
+      - default
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
       interval: 30s
@@ -39,6 +75,8 @@ services:
     container_name: tgscanner
     restart: unless-stopped
     depends_on:
+      wireguard:
+        condition: service_healthy
       gostsslcheck1:
         condition: service_healthy
       gostsslcheck2:
@@ -48,13 +86,11 @@ services:
     env_file: tg_domain_scanner_final/.env
     environment:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
+      - WG_CONTAINER_NAME=wireguard
     volumes:
       - ./data:/app/data
-      # WireGuard: конфиг теперь встроен в образ, монтируем только /dev/net/tun для создания интерфейсов
-      # Если нужно переопределить конфиг, можно раскомментировать следующую строку:
-      # - ./wg:/app/wg:ro
-      - /dev/net/tun:/dev/net/tun
-    cap_add:
-      - NET_ADMIN  # Необходимо для создания сетевых интерфейсов (WireGuard)
-    sysctls:
-      - net.ipv4.ip_forward=1  # Разрешаем форвардинг пакетов для VPN
+    networks:
+      - default  # Для доступа к gostsslcheck контейнерам
+      - wg_network  # Для доступа к WireGuard контейнеру
+    # Убираем NET_ADMIN и /dev/net/tun - больше не нужны
+    # sysctls тоже не нужны для tgscanner

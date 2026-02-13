@@ -287,55 +287,51 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
     if all_504_errors and checked_endpoints == len(endpoints) and last_error:
         logger.info(f"Все endpoints вернули 504 для {domain}, пробуем через WireGuard подключение")
         try:
-            # Поднимаем WireGuard интерфейс если не поднят
+            # Проверяем доступность WireGuard контейнера
             if not ensure_wg_interface_up():
-                logger.warning(f"Не удалось поднять WireGuard интерфейс для {domain}")
+                logger.warning(f"WireGuard контейнер недоступен для {domain}")
             else:
-                # Получаем IP адрес WireGuard интерфейса
-                wg_ip = get_wg_interface_ip()
-                if not wg_ip:
-                    logger.warning(f"Не удалось получить IP адрес WireGuard интерфейса для {domain}")
-                else:
-                    # Используем WireGuard IP для подключения
-                    wg_timeout = aiohttp.ClientTimeout(total=timeout)
-                    connector = aiohttp.TCPConnector(
-                        limit=10,
-                        limit_per_host=3,
-                        force_close=True,
-                        ttl_dns_cache=300,
-                        local_addr=(wg_ip, 0)  # Привязка к WireGuard IP
-                    )
-                    
-                    async with aiohttp.ClientSession(
-                        timeout=wg_timeout,
-                        connector=connector
-                    ) as session:
-                        # Пробуем первый endpoint через WireGuard
-                        if _endpoints:
-                            wg_url = _endpoints[0]
+                # WireGuard теперь работает в отдельном контейнере
+                # Запросы автоматически идут через WireGuard сеть благодаря Docker network
+                # Используем обычный connector без local_addr привязки
+                wg_timeout = aiohttp.ClientTimeout(total=timeout)
+                connector = aiohttp.TCPConnector(
+                    limit=10,
+                    limit_per_host=3,
+                    force_close=True,
+                    ttl_dns_cache=300
+                )
+                
+                async with aiohttp.ClientSession(
+                    timeout=wg_timeout,
+                    connector=connector
+                ) as session:
+                    # Пробуем первый endpoint через WireGuard сеть
+                    if _endpoints:
+                        wg_url = _endpoints[0]
+                        try:
+                            async with session.get(
+                                wg_url,
+                                params={"domain": domain}
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    result = bool(data.get("is_gost"))
+                                    logger.info(f"✅ GOST проверка для {domain} через WireGuard: {result}")
+                                    return result
+                                else:
+                                    logger.warning(f"WireGuard подключение вернуло статус {resp.status} для {domain}")
+                        except asyncio.TimeoutError:
+                            logger.warning(f"Таймаут при использовании WireGuard для {domain}")
+                        except (aiohttp.ClientError, RuntimeError) as wg_error:
+                            logger.warning(f"Ошибка при использовании WireGuard для {domain}: {wg_error}")
+                        except Exception as wg_error:
+                            logger.error(f"Неожиданная ошибка при использовании WireGuard для {domain}: {wg_error}", exc_info=True)
+                        finally:
                             try:
-                                async with session.get(
-                                    wg_url,
-                                    params={"domain": domain}
-                                ) as resp:
-                                    if resp.status == 200:
-                                        data = await resp.json()
-                                        result = bool(data.get("is_gost"))
-                                        logger.info(f"✅ GOST проверка для {domain} через WireGuard: {result}")
-                                        return result
-                                    else:
-                                        logger.warning(f"WireGuard подключение вернуло статус {resp.status} для {domain}")
-                            except asyncio.TimeoutError:
-                                logger.warning(f"Таймаут при использовании WireGuard для {domain}")
-                            except (aiohttp.ClientError, RuntimeError) as wg_error:
-                                logger.warning(f"Ошибка при использовании WireGuard для {domain}: {wg_error}")
-                            except Exception as wg_error:
-                                logger.error(f"Неожиданная ошибка при использовании WireGuard для {domain}: {wg_error}", exc_info=True)
-                            finally:
-                                try:
-                                    await connector.close()
-                                except Exception:
-                                    pass
+                                await connector.close()
+                            except Exception:
+                                pass
         except Exception as e:
             logger.warning(f"Не удалось использовать WireGuard подключение для {domain}: {e}")
     

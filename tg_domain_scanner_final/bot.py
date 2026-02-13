@@ -40,6 +40,7 @@ from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     BotCommand, 
     InlineQuery, 
@@ -714,6 +715,57 @@ def build_admin_keyboard() -> types.InlineKeyboardMarkup:
 
 router = Router()
 
+# ---------- Вспомогательные функции ----------
+
+async def safe_callback_answer(
+    callback: types.CallbackQuery,
+    text: str,
+    show_alert: bool = False
+) -> bool:
+    """
+    Безопасно отвечает на callback query, обрабатывая ошибки устаревших запросов.
+    
+    Args:
+        callback: Callback query объект
+        text: Текст ответа
+        show_alert: Показывать ли alert вместо уведомления
+        
+    Returns:
+        True если ответ успешно отправлен, False если callback устарел или произошла ошибка
+    """
+    try:
+        await callback.answer(text, show_alert=show_alert)
+        return True
+    except TelegramBadRequest as e:
+        # Обрабатываем ошибку "query is too old" - это нормальная ситуация
+        error_message = str(e).lower()
+        if "query is too old" in error_message or "timeout expired" in error_message or "query id is invalid" in error_message:
+            logger.debug(
+                f"⚠️ Callback query устарел (это нормально) | "
+                f"user_id={callback.from_user.id if callback.from_user else None} | "
+                f"callback_data={callback.data or 'N/A'}"
+            )
+            return False
+        else:
+            # Другие ошибки BadRequest логируем как предупреждение
+            logger.warning(
+                f"⚠️ Ошибка при ответе на callback query | "
+                f"user_id={callback.from_user.id if callback.from_user else None} | "
+                f"callback_data={callback.data or 'N/A'} | "
+                f"error={type(e).__name__}: {str(e)}"
+            )
+            return False
+    except Exception as e:
+        # Все остальные ошибки логируем
+        logger.warning(
+            f"⚠️ Неожиданная ошибка при ответе на callback query | "
+            f"user_id={callback.from_user.id if callback.from_user else None} | "
+            f"callback_data={callback.data or 'N/A'} | "
+            f"error={type(e).__name__}: {str(e)}"
+        )
+        return False
+
+
 # ---------- Middleware для расширенного логирования ----------
 
 class LoggingMiddleware:
@@ -843,15 +895,12 @@ class LoggingMiddleware:
                         # Если не удалось отправить, игнорируем
                         pass
                 elif isinstance(event, types.CallbackQuery):
-                    # Пытаемся ответить на callback
-                    try:
-                        await event.answer(
-                            "❌ Произошла ошибка",
-                            show_alert=True
-                        )
-                    except Exception:
-                        # Если не удалось ответить, игнорируем
-                        pass
+                    # Пытаемся ответить на callback безопасно
+                    await safe_callback_answer(
+                        event,
+                        "❌ Произошла ошибка",
+                        show_alert=True
+                    )
             except Exception as recovery_error:
                 # Если авто-восстановление тоже упало, просто логируем
                 logger.error(f"Ошибка при авто-восстановлении: {recovery_error}")
@@ -1342,15 +1391,13 @@ async def cmd_health(message: types.Message, state: FSMContext):
     try:
         from utils.wireguard_utils import check_wg_connection
         wg = check_wg_connection()
-        if wg["wg_available"] and wg["config_found"]:
-            if wg["interface_up"]:
-                health_status.append(f"✅ WireGuard: поднят ({wg.get('interface_ip', '—')})")
+        if wg.get("config_found"):
+            if wg.get("interface_up"):
+                health_status.append(f"✅ WireGuard: контейнер доступен ({wg.get('interface_ip', '—')})")
             else:
-                health_status.append(f"⚠️ WireGuard: конфиг есть, интерфейс не поднят")
-        elif wg["wg_available"]:
-            health_status.append(f"⚠️ WireGuard: конфиг не найден (резерв при 504 недоступен)")
+                health_status.append(f"⚠️ WireGuard: конфиг есть, контейнер недоступен")
         else:
-            health_status.append(f"⚠️ WireGuard: недоступен ({wg.get('last_error', 'wg не установлен')})")
+            health_status.append(f"⚠️ WireGuard: конфиг не найден (резерв при 504 недоступен)")
     except Exception as e:
         health_status.append(f"❌ WireGuard: Ошибка — {e}")
     
@@ -1686,13 +1733,13 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
     # Проверка доступа
     if not has_access(user_id):
         logger.warning(f"❌ Доступ запрещен для user_id={user_id} при переключении режима")
-        await callback.answer("❌ Нет доступа", show_alert=True)
+        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
     
     # Проверка разрешения на настройки
     if not has_permission(user_id, "settings"):
         logger.warning(f"❌ Нет разрешения на настройки для user_id={user_id} при переключении режима")
-        await callback.answer("❌ Нет доступа к настройкам", show_alert=True)
+        await safe_callback_answer(callback, "❌ Нет доступа к настройкам", show_alert=True)
         return
     
     new_mode = "full" if callback.data == "mode_full" else "brief"
@@ -1701,7 +1748,8 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(view_mode=new_mode)
     set_mode(user_id, new_mode)
 
-    await callback.answer(
+    await safe_callback_answer(
+        callback,
         f"Режим установлен: {'Расширенный' if new_mode == 'full' else 'Короткий'}"
     )
     
@@ -1803,18 +1851,19 @@ async def switch_waf_mode(callback: types.CallbackQuery):
     
     # Проверка доступа
     if not has_access(user_id):
-        await callback.answer("❌ Нет доступа", show_alert=True)
+        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
     
     # Проверка разрешения на настройки
     if not has_permission(user_id, "settings"):
-        await callback.answer("❌ Нет доступа к настройкам", show_alert=True)
+        await safe_callback_answer(callback, "❌ Нет доступа к настройкам", show_alert=True)
         return
     
     new_mode = "policy" if callback.data == "waf_mode_policy" else "light"
     set_waf_mode(user_id, new_mode)
 
-    await callback.answer(
+    await safe_callback_answer(
+        callback,
         f"Режим WAF установлен: {'Policy-based' if new_mode == 'policy' else 'Light check'}"
     )
 
@@ -1993,19 +2042,19 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
     
     if not has_access(user_id):
         logger.warning(f"❌ Доступ запрещен для user_id={user_id} при перепроверке")
-        await callback.answer("❌ Нет доступа", show_alert=True)
+        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
     
     if not has_permission(user_id, "check_domains"):
         logger.warning(f"❌ Нет разрешения на проверку доменов для user_id={user_id}")
-        await callback.answer("❌ Нет доступа к проверке доменов", show_alert=True)
+        await safe_callback_answer(callback, "❌ Нет доступа к проверке доменов", show_alert=True)
         return
     
     # Извлекаем домен из callback_data
     domain = callback.data.replace("recheck_", "")
     logger.debug(f"Перепроверка домена {domain} для user_id={user_id}")
     
-    await callback.answer("🔄 Перепроверяю домен...")
+    await safe_callback_answer(callback, "🔄 Перепроверяю домен...")
     
     try:
         await _recheck_domain(callback.message, state, domain)
@@ -2026,7 +2075,7 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
             f"error={type(e).__name__}: {str(e)}",
             exc_info=True
         )
-        await callback.answer("❌ Ошибка при перепроверке домена", show_alert=True)
+        await safe_callback_answer(callback, "❌ Ошибка при перепроверке домена", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("quick_waf_"))
@@ -4225,28 +4274,26 @@ async def admin_check_wg(callback: types.CallbackQuery):
 
     lines = ["🔌 *Проверка WireGuard*\n"]
 
-    if not status["wg_available"]:
+    if status.get("last_error") and not status.get("config_found"):
         lines.append("ℹ️ WireGuard недоступен")
         lines.append(f"   _{status['last_error']}_")
         lines.append("\n💡 *WireGuard нужен для резервного подключения*")
         lines.append("   при массовых 504 ошибках от GOST endpoints.")
         lines.append("\n   Для работы WireGuard:")
         lines.append("   1. Убедитесь что конфиг есть: `wg/TGBOT.conf`")
-        if os.path.exists("/.dockerenv"):
-            lines.append("   2. В Docker: проверьте что контейнер запущен с:")
-            lines.append("      - `cap_add: NET_ADMIN`")
-            lines.append("      - `/dev/net/tun` смонтирован")
-        else:
-            lines.append("   2. На хосте: установите `apt install wireguard-tools`")
+        lines.append("   2. Проверьте что WireGuard контейнер запущен в docker-compose")
     else:
         if status["config_found"]:
             lines.append(f"✅ Конфиг: `{status['config_path']}`")
+            lines.append(f"   Контейнер: `{status.get('container_name', 'wireguard')}`")
             lines.append(f"   Интерфейс: `{status['interface_name'] or '—'}`")
             lines.append(f"   IP: `{status['interface_ip'] or '—'}`")
             if status["interface_up"]:
-                lines.append("\n   **Статус: 🟢 Поднят**")
+                lines.append("\n   **Статус: 🟢 Контейнер доступен**")
             else:
-                lines.append("\n   **Статус: 🔴 Не поднят**")
+                lines.append("\n   **Статус: 🔴 Контейнер недоступен**")
+                if status.get("last_error"):
+                    lines.append(f"   _{status['last_error']}_")
         else:
             lines.append(f"❌ Конфиг не найден: `{status['config_path']}`")
             if status.get("last_error"):
@@ -4256,18 +4303,13 @@ async def admin_check_wg(callback: types.CallbackQuery):
     
     # Создаем клавиатуру с кнопками управления
     keyboard_buttons = []
-    if status.get("wg_available") and status.get("config_found"):
-        if status.get("interface_up"):
+    if status.get("config_found"):
+        # WireGuard теперь работает в отдельном контейнере, управление через docker-compose
+        # Кнопки поднятия/опускания оставлены для обратной совместимости, но они только проверяют доступность
+        if not status.get("interface_up"):
             keyboard_buttons.append([
                 types.InlineKeyboardButton(
-                    text="🔴 Опустить WireGuard",
-                    callback_data="admin_wg_down"
-                )
-            ])
-        else:
-            keyboard_buttons.append([
-                types.InlineKeyboardButton(
-                    text="🟢 Поднять WireGuard",
+                    text="🔄 Проверить доступность",
                     callback_data="admin_wg_up"
                 )
             ])
@@ -4294,17 +4336,19 @@ async def admin_check_wg(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "admin_wg_up")
 async def admin_wg_up(callback: types.CallbackQuery):
-    """Поднять WireGuard интерфейс."""
+    """Проверить доступность WireGuard контейнера."""
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
-    await callback.answer("⏳ Поднимаю WireGuard...")
+    await callback.answer("⏳ Проверяю WireGuard контейнер...")
     
+    # WireGuard теперь работает в отдельном контейнере
+    # Эта функция только проверяет доступность контейнера
     if ensure_wg_interface_up():
-        await callback.answer("✅ WireGuard успешно поднят!", show_alert=True)
+        await callback.answer("✅ WireGuard контейнер доступен!", show_alert=True)
     else:
-        await callback.answer("❌ Не удалось поднять WireGuard", show_alert=True)
+        await callback.answer("❌ WireGuard контейнер недоступен. Проверьте docker-compose.", show_alert=True)
     
     # Обновляем статус
     await admin_check_wg(callback)
@@ -4312,17 +4356,12 @@ async def admin_wg_up(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "admin_wg_down")
 async def admin_wg_down(callback: types.CallbackQuery):
-    """Опустить WireGuard интерфейс."""
+    """Проверить статус WireGuard контейнера."""
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
-    await callback.answer("⏳ Опускаю WireGuard...")
-    
-    if ensure_wg_interface_down():
-        await callback.answer("✅ WireGuard успешно опущен!", show_alert=True)
-    else:
-        await callback.answer("❌ Не удалось опустить WireGuard", show_alert=True)
+    await callback.answer("ℹ️ WireGuard управляется через docker-compose", show_alert=True)
     
     # Обновляем статус
     await admin_check_wg(callback)
@@ -4829,38 +4868,31 @@ async def main():
     start_monitoring(bot)
     logger.info("Мониторинг доменов запущен")
 
-    # Поднимаем WireGuard при старте (если конфиг доступен) — резерв при массовых 504
+    # Проверяем доступность WireGuard контейнера при старте — резерв при массовых 504
     # WireGuard используется ТОЛЬКО если все GOST endpoints вернули 504 ошибки
     # Основной функционал работает через обычные endpoints, WireGuard - только резерв
     try:
         wg_status = check_wg_connection()
-        if wg_status.get("wg_available") and wg_status.get("config_found"):
-            if ensure_wg_interface_up():
-                logger.info(f"✅ WireGuard интерфейс поднят при старте (резерв при 504): {wg_status.get('interface_name', '—')} ({wg_status.get('interface_ip', '—')})")
+        if wg_status.get("config_found"):
+            if wg_status.get("interface_up"):
+                logger.info(f"✅ WireGuard контейнер доступен при старте (резерв при 504): {wg_status.get('container_name', 'wireguard')} ({wg_status.get('interface_ip', '—')})")
             else:
-                logger.warning("⚠️ WireGuard конфиг найден, но интерфейс не поднят — резерв при 504 может не сработать")
-        elif wg_status.get("wg_available"):
-            logger.debug("ℹ️ WireGuard конфиг не найден — резервное подключение при 504 недоступно")
+                logger.warning(f"⚠️ WireGuard конфиг найден, но контейнер недоступен — резерв при 504 может не сработать: {wg_status.get('last_error', 'неизвестная ошибка')}")
         else:
-            logger.debug(f"ℹ️ WireGuard недоступен: {wg_status.get('last_error', 'не установлен')} (это нормально, основной функционал работает без WG)")
+            logger.debug("ℹ️ WireGuard конфиг не найден — резервное подключение при 504 недоступно")
     except Exception as e:
-        logger.warning(f"WireGuard при старте: {e} (не критично, основной функционал работает)")
+        logger.warning(f"WireGuard при старте: {e} (не критично, основной функционал работает без WG)")
     
-    # Периодическая проверка и переподнятие WireGuard (каждые 5 минут)
+    # Периодическая проверка доступности WireGuard контейнера (каждые 5 минут)
     async def periodic_wg_check():
-        """Периодически проверяет и переподнимает WireGuard если упал."""
+        """Периодически проверяет доступность WireGuard контейнера."""
         while not _shutdown_event.is_set():
             await asyncio.sleep(300)  # Каждые 5 минут
             if not _shutdown_event.is_set():
                 try:
                     wg_status = check_wg_connection()
-                    if wg_status.get("wg_available") and wg_status.get("config_found"):
-                        if not wg_status.get("interface_up"):
-                            logger.info("WireGuard интерфейс упал, пытаюсь переподнять...")
-                            if ensure_wg_interface_up():
-                                logger.info("✅ WireGuard интерфейс успешно переподнят")
-                            else:
-                                logger.warning("⚠️ Не удалось переподнять WireGuard интерфейс")
+                    if wg_status.get("config_found") and not wg_status.get("interface_up"):
+                        logger.warning(f"WireGuard контейнер недоступен: {wg_status.get('last_error', 'неизвестная ошибка')}")
                 except Exception as e:
                     logger.debug(f"Ошибка при периодической проверке WireGuard: {e}")
     
