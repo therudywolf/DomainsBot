@@ -331,6 +331,7 @@ def build_report_keyboard(
     current_mode: str,
     user_id: int,
     has_waf_permission: bool = True,
+    has_monitoring_permission: bool = False,
 ):
     """
     Создает клавиатуру с кнопками для управления отчетом.
@@ -342,12 +343,14 @@ def build_report_keyboard(
     - Повторную проверку домена
     - Детальный просмотр блоков (DNS, SSL, WAF)
     - Поделиться отчетом
+    - Поставить на мониторинг (если есть право)
     
     Args:
         domain: Домен для быстрых действий
         current_mode: Текущий режим отчета (full/brief)
         user_id: ID пользователя
         has_waf_permission: Есть ли разрешение на проверку WAF
+        has_monitoring_permission: Есть ли разрешение на мониторинг
         
     Returns:
         InlineKeyboardMarkup с кнопками
@@ -422,6 +425,15 @@ def build_report_keyboard(
             callback_data=f"recheck_{domain}",
         )
     ])
+    
+    # Кнопка "Поставить на мониторинг" (если есть право)
+    if has_monitoring_permission:
+        buttons.append([
+            aiogram_types.InlineKeyboardButton(
+                text="📊 Поставить на мониторинг",
+                callback_data=f"monitor_add_from_report_{domain}",
+            )
+        ])
     
     # Кнопка "Поделиться" (через inline режим)
     buttons.append([

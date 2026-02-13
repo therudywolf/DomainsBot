@@ -100,7 +100,8 @@ async def send_domain_reports(
     view_mode: str,
     user_id: int,
     has_waf_perm: bool,
-    brief: bool = False
+    brief: bool = False,
+    has_monitoring_perm: bool = False
 ) -> None:
     """
     Отправляет отчеты о проверке доменов пользователю.
@@ -113,13 +114,14 @@ async def send_domain_reports(
         user_id: ID пользователя
         has_waf_perm: Есть ли у пользователя разрешение на проверку WAF
         brief: Использовать краткий режим отчета
+        has_monitoring_perm: Есть ли у пользователя разрешение на мониторинг
     """
     # Для каждого домена создаем отдельное сообщение с кнопками
     for idx, (domain, dns_info, ssl_info, waf_enabled, waf_method) in enumerate(collected, 1):
         report_text = build_report(domain, dns_info, ssl_info, waf_enabled, brief=brief, waf_method=waf_method)
         
         # Создаем клавиатуру с кнопками для этого домена
-        keyboard = build_report_keyboard(domain, view_mode, user_id, has_waf_perm)
+        keyboard = build_report_keyboard(domain, view_mode, user_id, has_waf_perm, has_monitoring_perm)
         
         # Используем safe_send_text для rate limiting и разбиения длинных сообщений
         await safe_send_text(

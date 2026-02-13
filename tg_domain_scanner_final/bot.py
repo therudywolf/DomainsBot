@@ -1122,6 +1122,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         logger.debug(f"Отправка отдельных отчетов для {total} доменов")
         # Отдельные отчеты для каждого домена
         has_waf_perm = has_permission(user_id, "check_domains")
+        has_monitoring_perm = has_permission(user_id, "monitoring")
         await send_domain_reports(
             message.bot,
             message.chat.id,
@@ -1129,7 +1130,8 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
             view_mode,
             user_id,
             has_waf_perm,
-            brief
+            brief,
+            has_monitoring_perm
         )
         logger.info(f"Отчеты отправлены для user_id={user_id}, доменов={total}")
 
@@ -1663,7 +1665,8 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
                 # Если не удалось обновить отчет, хотя бы обновляем клавиатуру
                 try:
                     has_waf_perm = has_permission(user_id, "check_domains")
-                    keyboard = build_report_keyboard(domain, new_mode, user_id, has_waf_perm)
+                    has_monitoring_perm = has_permission(user_id, "monitoring")
+                    keyboard = build_report_keyboard(domain, new_mode, user_id, has_waf_perm, has_monitoring_perm)
                     await callback.message.edit_reply_markup(reply_markup=keyboard)
                 except Exception as e2:
                     logger.error(f"Ошибка при обновлении клавиатуры: {e2}")
@@ -1813,7 +1816,8 @@ async def _recheck_domain(
         
         # Создаем клавиатуру
         has_waf_perm = has_permission(user_id, "check_domains")
-        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        has_monitoring_perm = has_permission(user_id, "monitoring")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm, has_monitoring_perm)
         
         # Обновляем сообщение
         logger.debug(f"Обновление отчета для домена {domain}")
@@ -1971,7 +1975,8 @@ async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
         
         # Обновляем клавиатуру
         has_waf_perm = has_permission(user_id, "check_domains")
-        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        has_monitoring_perm = has_permission(user_id, "monitoring")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm, has_monitoring_perm)
         
         await callback.message.edit_text(
             report_text,
@@ -2036,7 +2041,8 @@ async def quick_certs_check(callback: types.CallbackQuery, state: FSMContext):
         
         # Обновляем клавиатуру
         has_waf_perm = has_permission(user_id, "check_domains")
-        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        has_monitoring_perm = has_permission(user_id, "monitoring")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm, has_monitoring_perm)
         
         await callback.message.edit_text(
             report_text,
@@ -2147,7 +2153,8 @@ async def show_dns_details(callback: types.CallbackQuery):
         from utils.formatting import build_report_keyboard
         mode = "full"  # Используем полный режим для деталей
         has_waf_perm = has_permission(user_id, "check_domains")
-        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        has_monitoring_perm = has_permission(user_id, "monitoring")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm, has_monitoring_perm)
         
         await callback.message.edit_text(
             detail_text,
@@ -2254,7 +2261,8 @@ async def show_ssl_details(callback: types.CallbackQuery):
         from utils.formatting import build_report_keyboard
         mode = "full"  # Используем полный режим для деталей
         has_waf_perm = has_permission(user_id, "check_domains")
-        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        has_monitoring_perm = has_permission(user_id, "monitoring")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm, has_monitoring_perm)
         
         await callback.message.edit_text(
             detail_text,
@@ -2328,7 +2336,8 @@ async def show_waf_details(callback: types.CallbackQuery):
         from utils.formatting import build_report_keyboard
         mode = "full"  # Используем полный режим для деталей
         has_waf_perm = has_permission(user_id, "check_domains")
-        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm)
+        has_monitoring_perm = has_permission(user_id, "monitoring")
+        keyboard = build_report_keyboard(domain, mode, user_id, has_waf_perm, has_monitoring_perm)
         
         await callback.message.edit_text(
             detail_text,
@@ -2376,6 +2385,43 @@ async def cmd_monitor(message: types.Message):
     )
 
 
+@router.callback_query(F.data.startswith("monitor_add_from_report_"))
+async def monitor_add_from_report(callback: types.CallbackQuery):
+    """Добавляет домен в мониторинг из отчета."""
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Проверка разрешения на мониторинг
+    if not has_permission(user_id, "monitoring"):
+        await callback.answer("❌ Нет доступа к мониторингу", show_alert=True)
+        return
+    
+    # Извлекаем домен из callback_data
+    domain = callback.data.replace("monitor_add_from_report_", "")
+    
+    if not domain:
+        await callback.answer("❌ Ошибка: домен не указан", show_alert=True)
+        return
+    
+    # Нормализуем домен
+    domains = normalize_domains([domain])
+    
+    if not domains:
+        await callback.answer("❌ Некорректный домен", show_alert=True)
+        return
+    
+    domain = domains[0]
+    
+    # Добавляем в мониторинг
+    if add_domain_to_monitoring(user_id, domain):
+        await callback.answer(f"✅ Домен {domain} добавлен в мониторинг", show_alert=False)
+    else:
+        await callback.answer(f"ℹ️ Домен {domain} уже в мониторинге", show_alert=False)
+
+
 @router.callback_query(F.data == "monitor_add")
 async def monitor_add(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -2418,9 +2464,8 @@ async def process_monitor_add(message: types.Message, state: FSMContext):
                     await state.clear()
                     return
                 
-                # Парсим домены из файла
-                raw_items = [x.strip() for x in DOMAIN_SPLIT_RE.split(text_data) if x.strip()]
-                domains = normalize_domains(raw_items)
+                # Используем ту же логику что и при проверке доменов
+                domains, bad = validate_and_normalize_domains(text_data)
                 
                 added_count = 0
                 for domain in domains:
@@ -2428,8 +2473,10 @@ async def process_monitor_add(message: types.Message, state: FSMContext):
                         added_count += 1
                 
                 response = f"✅ Добавлено {added_count} домен(ов) из файла в мониторинг"
-                if len(domains) < len(raw_items):
-                    response += f"\n⚠️ Некоторые домены не были добавлены (некорректный формат)"
+                if bad:
+                    response += f"\n⚠️ Некоторые домены не были добавлены (некорректный формат): {', '.join(bad[:5])}"
+                    if len(bad) > 5:
+                        response += f" и еще {len(bad) - 5}"
                 
                 await message.answer(response)
                 await state.clear()
@@ -2440,10 +2487,20 @@ async def process_monitor_add(message: types.Message, state: FSMContext):
                 await state.clear()
                 return
     
-    # Обрабатываем текстовый ввод
+    # Обрабатываем текстовый ввод - используем ту же логику что и при проверке доменов
     text = message.text or ""
-    raw_items = [x.strip() for x in DOMAIN_SPLIT_RE.split(text) if x.strip()]
-    domains = normalize_domains(raw_items)
+    domains, bad = validate_and_normalize_domains(text)
+    
+    if not domains:
+        await message.answer(
+            "❗️ Не вижу ни одного корректного домена.\n\n"
+            "Убедитесь, что домены указаны правильно. Поддерживаются форматы:\n"
+            "• example.com\n"
+            "• https://example.com/path\n"
+            "• http://example.com?param=value"
+        )
+        await state.clear()
+        return
     
     added_count = 0
     for domain in domains:
@@ -2451,8 +2508,10 @@ async def process_monitor_add(message: types.Message, state: FSMContext):
             added_count += 1
     
     response = f"✅ Добавлено {added_count} домен(ов) в мониторинг"
-    if len(domains) < len(raw_items):
-        response += f"\n⚠️ Некоторые домены не были добавлены (некорректный формат)"
+    if bad:
+        response += f"\n⚠️ Некоторые домены не были добавлены (некорректный формат): {', '.join(bad[:5])}"
+        if len(bad) > 5:
+            response += f" и еще {len(bad) - 5}"
     
     await message.answer(response)
     await state.clear()
@@ -3360,6 +3419,10 @@ async def admin_list_access(callback: types.CallbackQuery):
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
+    if not callback.message:
+        await callback.answer("❌ Ошибка: сообщение недоступно", show_alert=True)
+        return
+    
     await callback.answer("⏳ Загрузка списка пользователей...")
     
     db = get_access_list()
@@ -3369,6 +3432,9 @@ async def admin_list_access(callback: types.CallbackQuery):
         return
     
     bot = callback.message.bot if callback.message else callback.bot
+    if not bot:
+        await callback.message.answer("❌ Ошибка: бот недоступен")
+        return
     
     # Форматируем список с разрешениями
     lines = ["📋 *Список пользователей и их разрешения:*\n"]
@@ -3384,6 +3450,7 @@ async def admin_list_access(callback: types.CallbackQuery):
     username_map = {}
     for user_id, username_result in zip(user_ids, usernames):
         if isinstance(username_result, str):
+            # Сохраняем даже пустую строку, так как это означает отсутствие username
             username_map[user_id] = username_result
         elif isinstance(username_result, Exception):
             logger.debug(f"Ошибка получения username для {user_id}: {username_result}")
@@ -3391,7 +3458,11 @@ async def admin_list_access(callback: types.CallbackQuery):
     for user_id, data in sorted(db.items(), key=lambda x: (int(x[0]) if str(x[0]).isdigit() else 0)):
         # Используем актуальный username из API, если доступен, иначе из БД
         uid = int(user_id) if str(user_id).isdigit() else 0
-        current_username = username_map.get(uid) or data.get("username", "")
+        # Проверяем, есть ли значение в username_map (даже если это пустая строка)
+        if uid in username_map:
+            current_username = username_map[uid]
+        else:
+            current_username = data.get("username", "")
         
         added_at = data.get("added_at", "")
         permissions = data.get("permissions", DEFAULT_PERMISSIONS.copy())
@@ -3431,6 +3502,10 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
+    if not callback.message:
+        await callback.answer("❌ Ошибка: сообщение недоступно", show_alert=True)
+        return
+    
     await callback.answer("⏳ Загрузка списка пользователей...")
     
     await state.set_state(AdminStates.manage_permissions_user_waiting)
@@ -3442,6 +3517,10 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
         return
     
     bot = callback.message.bot if callback.message else callback.bot
+    if not bot:
+        await callback.message.answer("❌ Ошибка: бот недоступен")
+        await state.clear()
+        return
     
     # Получаем актуальные юзернеймы для всех пользователей
     user_ids = [int(user_id) for user_id in db.keys() if str(user_id).isdigit()]
@@ -3454,6 +3533,7 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
     username_map = {}
     for user_id, username_result in zip(user_ids, usernames):
         if isinstance(username_result, str):
+            # Сохраняем даже пустую строку, так как это означает отсутствие username
             username_map[user_id] = username_result
         elif isinstance(username_result, Exception):
             logger.debug(f"Ошибка получения username для {user_id}: {username_result}")
@@ -3462,7 +3542,11 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
     users_list = "👥 *Выберите пользователя для управления разрешениями:*\n\n"
     for user_id, data in sorted(db.items(), key=lambda x: (int(x[0]) if str(x[0]).isdigit() else 0)):
         uid = int(user_id) if str(user_id).isdigit() else 0
-        current_username = username_map.get(uid) or data.get("username", "")
+        # Проверяем, есть ли значение в username_map (даже если это пустая строка)
+        if uid in username_map:
+            current_username = username_map[uid]
+        else:
+            current_username = data.get("username", "")
         user_display = f"ID: {user_id}"
         if current_username:
             user_display += f" (@{current_username})"
@@ -3611,6 +3695,10 @@ async def admin_export_users(callback: types.CallbackQuery):
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
+    if not callback.message:
+        await callback.answer("❌ Ошибка: сообщение недоступно", show_alert=True)
+        return
+    
     await callback.answer("⏳ Подготовка экспорта...")
     
     db = get_access_list()
@@ -3620,6 +3708,9 @@ async def admin_export_users(callback: types.CallbackQuery):
         return
     
     bot = callback.message.bot if callback.message else callback.bot
+    if not bot:
+        await callback.message.answer("❌ Ошибка: бот недоступен")
+        return
     
     # Получаем актуальные юзернеймы для всех пользователей
     user_ids = [int(user_id) for user_id in db.keys() if str(user_id).isdigit()]
@@ -3632,13 +3723,18 @@ async def admin_export_users(callback: types.CallbackQuery):
     username_map = {}
     for user_id, username_result in zip(user_ids, usernames):
         if isinstance(username_result, str):
+            # Сохраняем даже пустую строку, так как это означает отсутствие username
             username_map[user_id] = username_result
     
     # Формируем данные для экспорта
     export_data = {}
     for user_id, data in sorted(db.items(), key=lambda x: (int(x[0]) if str(x[0]).isdigit() else 0)):
         uid = int(user_id) if str(user_id).isdigit() else 0
-        current_username = username_map.get(uid) or data.get("username", "")
+        # Проверяем, есть ли значение в username_map (даже если это пустая строка)
+        if uid in username_map:
+            current_username = username_map[uid]
+        else:
+            current_username = data.get("username", "")
         
         export_data[user_id] = {
             "user_id": int(user_id) if str(user_id).isdigit() else user_id,
@@ -3683,16 +3779,28 @@ async def admin_back(callback: types.CallbackQuery):
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
+    if not callback.message:
+        await callback.answer("❌ Ошибка: сообщение недоступно", show_alert=True)
+        return
+    
     help_text = (
         "👨‍💼 *Админ-панель*\n\n"
         "Используйте кнопки ниже для управления:"
     )
     
-    await callback.message.edit_text(
-        help_text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=build_admin_keyboard(),
-    )
+    try:
+        await callback.message.edit_text(
+            help_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=build_admin_keyboard(),
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при редактировании сообщения: {e}")
+        await callback.message.answer(
+            help_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=build_admin_keyboard(),
+        )
     await callback.answer()
 
 

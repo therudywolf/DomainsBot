@@ -24,6 +24,7 @@ from utils.dns_utils import fetch_dns
 from utils.ssl_utils import fetch_ssl
 from utils.waf_utils import test_waf
 from utils.file_utils import async_read_json, async_write_json
+from utils.chat_settings import get_notification_chat_id
 from config import settings
 
 logger = logging.getLogger(__name__)
