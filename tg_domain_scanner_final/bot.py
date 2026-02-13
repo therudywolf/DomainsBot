@@ -642,7 +642,7 @@ class LoggingMiddleware:
         data
     ):
         """Обрабатывает событие с логированием."""
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
         event_type = type(event).__name__
         
         # Логируем входящее событие
@@ -680,7 +680,8 @@ class LoggingMiddleware:
                 f"query={query}"
             )
         else:
-            logger.debug(f"📥 Событие {event_type} получено")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"📥 Событие {event_type} получено")
         
         try:
             # НЕ добавляем задержку для входящих сообщений - это блокирует обработку команд
@@ -691,7 +692,7 @@ class LoggingMiddleware:
             result = await handler(event, data)
             
             # Логируем успешное выполнение
-            duration = asyncio.get_event_loop().time() - start_time
+            duration = asyncio.get_running_loop().time() - start_time
             if duration > 1.0:  # Логируем только медленные обработчики
                 logger.warning(
                     f"⏱️ Медленный обработчик | "
@@ -709,7 +710,12 @@ class LoggingMiddleware:
             
         except Exception as e:
             # Логируем ошибку с полным контекстом
-            duration = asyncio.get_event_loop().time() - start_time
+            try:
+                loop = asyncio.get_running_loop()
+                duration = loop.time() - start_time
+            except RuntimeError:
+                # Если нет запущенного loop, используем альтернативный способ
+                duration = (datetime.now().timestamp() - start_time) if isinstance(start_time, float) else 0.0
             error_context = {
                 "event_type": event_type,
                 "duration": f"{duration:.3f}s",
@@ -853,7 +859,8 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         return
     
     # Валидация и нормализация доменов
-    logger.debug(f"Валидация и нормализация доменов для user_id={user_id}")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Валидация и нормализация доменов для user_id={user_id}")
     domains, bad = validate_and_normalize_domains(raw_text)
     
     logger.info(
@@ -905,12 +912,13 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     MIN_EDIT_INTERVAL = 10  # секунд между edit_text (увеличено для снижения нагрузки на API)
     total = len(tasks)
     done = 0
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     start_ts = loop.time()
     last_edit = start_ts - MIN_EDIT_INTERVAL
     progress_msg: types.Message | None = None
 
-    logger.debug(f"Ожидание завершения {total} задач проверки доменов")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Ожидание завершения {total} задач проверки доменов")
     
     # Максимальное время на проверку одного домена (включая все попытки)
     MAX_DOMAIN_CHECK_TIMEOUT = 120  # 2 минуты на домен
@@ -989,7 +997,8 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                 collected.append(row)
                 done += 1
                 completed_count += 1
-                logger.debug(f"✅ Домен проверен: {row[0]} ({done}/{total})")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"✅ Домен проверен: {row[0]} ({done}/{total})")
             except BaseException as e:
                 logger.error(
                     f"❌ Неожиданная ошибка при обработке результата проверки | "
@@ -1022,10 +1031,12 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
                     from utils.telegram_utils import safe_reply, safe_edit_text
                     if progress_msg is None:
                         progress_msg = await safe_reply(message, text)
-                        logger.debug(f"Создано сообщение прогресса для user_id={user_id}")
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Создано сообщение прогресса для user_id={user_id}")
                     else:
                         await safe_edit_text(progress_msg, text)
-                        logger.debug(f"Обновлено сообщение прогресса: {done}/{total} для user_id={user_id}")
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"Обновлено сообщение прогресса: {done}/{total} для user_id={user_id}")
                     last_edit = now
                 except Exception as e:
                     logger.warning(f"Ошибка при обновлении прогресса: {e}")
@@ -1612,10 +1623,10 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
                 # Перепроверяем домен с новым режимом
                 # Это гарантирует, что отчет будет обновлен с актуальными данными
                 await _recheck_domain(callback.message, state, domain, new_mode)
-                duration = asyncio.get_event_loop().time() - start_time
+                duration = asyncio.get_running_loop().time() - start_time
                 logger.info(f"✅ Отчет обновлен для {domain} за {duration:.2f}s")
             except Exception as e:
-                duration = asyncio.get_event_loop().time() - start_time
+                duration = asyncio.get_running_loop().time() - start_time
                 logger.error(
                     f"❌ Ошибка при обновлении отчета для {domain} | "
                     f"user_id={user_id} | "
@@ -3747,14 +3758,14 @@ async def handle_text(message: types.Message, state: FSMContext):
         logger.debug(f"Обработка доменов из текста для user_id={user_id}")
         try:
             await _process_domains(message, state, text)
-            duration = asyncio.get_event_loop().time() - start_time
+            duration = asyncio.get_running_loop().time() - start_time
             logger.info(
                 f"✅ Обработка доменов завершена | "
                 f"user_id={user_id} | "
                 f"duration={duration:.2f}s"
             )
         except Exception as e:
-            duration = asyncio.get_event_loop().time() - start_time
+            duration = asyncio.get_running_loop().time() - start_time
             logger.error(
                 f"❌ Ошибка при обработке доменов | "
                 f"user_id={user_id} | "

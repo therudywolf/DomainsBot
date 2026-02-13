@@ -88,3 +88,7 @@ async def test_waf_light(domain: str, timeout: Optional[int] = None) -> bool:
         logger.warning(f"Неожиданная ошибка при проверке WAF для {domain}: {e}")
         return False
 
+
+
+
+

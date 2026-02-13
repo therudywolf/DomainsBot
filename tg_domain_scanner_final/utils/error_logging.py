@@ -150,3 +150,7 @@ def format_error_for_user(error_id: str, error_type: str) -> str:
         f"Если проблема повторяется, обратитесь к администратору и укажите код ошибки."
     )
 
+
+
+
+

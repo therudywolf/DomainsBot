@@ -407,3 +407,7 @@ RATE_LIMIT_WINDOW=60
 - [Документация Docker Compose](https://docs.docker.com/compose/)
 - [Telegram Bot API](https://core.telegram.org/bots/api)
 
+
+
+
+

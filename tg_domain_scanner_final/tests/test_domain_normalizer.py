@@ -85,3 +85,7 @@ class TestNormalizeDomains:
         result = normalize_domains(domains)
         assert result == ["example.com", "test.ru"] or result == ["test.ru", "example.com"]
 
+
+
+
+

@@ -33,3 +33,7 @@ def mock_settings(monkeypatch):
     monkeypatch.setenv("DNS_TIMEOUT", "5")
     monkeypatch.setenv("HTTP_TIMEOUT", "6")
 
+
+
+
+

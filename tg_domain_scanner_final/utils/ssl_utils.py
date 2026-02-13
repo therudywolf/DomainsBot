@@ -134,11 +134,11 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
     
     # Пробуем каждый endpoint с ограничением времени
     max_total_time = timeout * len(endpoints)  # Максимальное время на все попытки
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
     
     for attempt, url in enumerate(endpoints, 1):
         # Проверяем, не превысили ли общий таймаут
-        elapsed = asyncio.get_event_loop().time() - start_time
+        elapsed = asyncio.get_running_loop().time() - start_time
         if elapsed >= max_total_time:
             logger.warning(f"Превышен общий таймаут для проверки GOST {domain} ({elapsed:.2f}s)")
             break
@@ -158,14 +158,16 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
                 timeout=timeout_obj,
                 connector=local_connector
             ) as session:
-                logger.debug(f"Проверка GOST для {domain} через {url} (попытка {attempt}/{len(endpoints)})")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Проверка GOST для {domain} через {url} (попытка {attempt}/{len(endpoints)})")
                 
                 try:
                     async with session.get(url, params={"domain": domain}) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             result = bool(data.get("is_gost"))
-                            logger.debug(f"GOST проверка для {domain}: {result} (через {url})")
+                            if logger.isEnabledFor(logging.DEBUG):
+                                logger.debug(f"GOST проверка для {domain}: {result} (через {url})")
                             return result
                         else:
                             logger.warning(f"GOST endpoint {url} вернул статус {resp.status} для {domain}")
@@ -195,7 +197,8 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
                 try:
                     await local_connector.close()
                 except Exception as e:
-                    logger.debug(f"Ошибка при закрытии connector: {e}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Ошибка при закрытии connector: {e}")
         
         # Небольшая задержка перед следующей попыткой (только если не последняя)
         if attempt < len(endpoints):
@@ -256,7 +259,8 @@ async def _get_gost_certificate_info(domain: str, port: int = 443) -> Optional[D
             writer.close()
             await writer.wait_closed()
     except Exception as e:
-        logger.debug(f"Не удалось получить GOST сертификат для {domain}: {e}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Не удалось получить GOST сертификат для {domain}: {e}")
     
     return None
 
@@ -312,10 +316,12 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
             timeout=ssl_timeout
         )
     except asyncio.TimeoutError:
-        logger.debug(f"Таймаут при подключении к {domain}:{port}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Таймаут при подключении к {domain}:{port}")
         return cert_info
     except Exception as e:
-        logger.debug(f"Не удалось подключиться к {domain}:{port}: {e}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Не удалось подключиться к {domain}:{port}: {e}")
         return cert_info
 
     try:

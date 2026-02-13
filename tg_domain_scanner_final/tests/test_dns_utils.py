@@ -69,3 +69,7 @@ class TestFetchDNS:
             # При ошибке должен вернуться пустой словарь
             assert isinstance(result, dict)
 
+
+
+
+

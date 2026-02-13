@@ -94,18 +94,9 @@ class BufferedFileWriter:
             # Принудительное сохранение при достижении лимита
             # Используем синхронное сохранение для надежности
             if len(self._buffer) >= self.max_buffer_size:
-                try:
-                    # Пытаемся получить event loop
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # Если loop запущен, создаем задачу
-                        asyncio.create_task(self.flush())
-                    else:
-                        # Если loop не запущен, запускаем синхронно
-                        loop.run_until_complete(self.flush())
-                except RuntimeError:
-                    # Если нет event loop, используем синхронное сохранение
-                    self._sync_flush()
+                # Всегда используем синхронное сохранение для надежности
+                # Асинхронное сохранение будет выполнено периодически
+                self._sync_flush()
     
     async def flush(self) -> bool:
         """
@@ -119,7 +110,8 @@ class BufferedFileWriter:
                 return True
             
             # Загружаем текущие данные
-            data = await asyncio.get_event_loop().run_in_executor(
+            loop = asyncio.get_running_loop()
+            data = await loop.run_in_executor(
                 None, self._load_func
             )
             
@@ -132,13 +124,14 @@ class BufferedFileWriter:
                     logger.error(f"Ошибка при применении операции: {e}")
             
             # Сохраняем данные
-            success = await asyncio.get_event_loop().run_in_executor(
+            success = await loop.run_in_executor(
                 None, self._save_func, data
             )
             
             if success:
                 self._last_flush = datetime.now()
-                logger.debug(f"Буфер сохранен в {self.file_path}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Буфер сохранен в {self.file_path}")
             
             return success
     
@@ -170,7 +163,8 @@ class BufferedFileWriter:
             
             if success:
                 self._last_flush = datetime.now()
-                logger.debug(f"Буфер синхронно сохранен в {self.file_path}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Буфер синхронно сохранен в {self.file_path}")
             
             return success
     
@@ -187,23 +181,23 @@ class BufferedFileWriter:
     def start_periodic_flush(self) -> None:
         """Запускает периодическое сохранение."""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                if self._flush_task is None or self._flush_task.done():
-                    self._flush_task = asyncio.create_task(self._periodic_flush())
+            loop = asyncio.get_running_loop()
+            if self._flush_task is None or self._flush_task.done():
+                self._flush_task = asyncio.create_task(self._periodic_flush())
+                if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Запущено периодическое сохранение для {self.file_path}")
-            else:
-                # Если loop не запущен, запустим позже
-                logger.debug(f"Event loop не запущен, периодическое сохранение будет запущено позже для {self.file_path}")
         except RuntimeError:
-            # Если нет event loop, логируем предупреждение
-            logger.warning(f"Нет event loop для периодического сохранения {self.file_path}")
+            # Если нет запущенного event loop, периодическое сохранение будет недоступно
+            # Это нормально для синхронных контекстов - будет использоваться только синхронное сохранение
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Event loop не запущен, периодическое сохранение недоступно для {self.file_path}")
     
     def stop_periodic_flush(self) -> None:
         """Останавливает периодическое сохранение."""
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
-            logger.debug(f"Остановлено периодическое сохранение для {self.file_path}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Остановлено периодическое сохранение для {self.file_path}")
 
 
 # Глобальные буферизованные писатели для разных файлов

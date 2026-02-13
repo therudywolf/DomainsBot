@@ -165,19 +165,40 @@ async def check_rate_limit(user_id: int, operation_type: str = "default") -> boo
     """
     Проверяет rate limit для пользователя (async версия).
     
-    ВНИМАНИЕ: Rate limiting отключен - функция всегда возвращает True.
-    Это сделано для предотвращения блокировки пользователей.
-    
     Args:
         user_id: ID пользователя
         operation_type: Тип операции ("default", "heavy", "file_upload")
         
     Returns:
-        True (rate limiting отключен)
+        True если запрос разрешен, False если превышен лимит
     """
-    # Rate limiting отключен - всегда разрешаем запросы
-    # Это предотвращает блокировку пользователей при активном использовании
-    return True
+    # Проверяем временную блокировку
+    async with _block_lock:
+        if user_id in _blocked_users:
+            unblock_time = _blocked_users[user_id]
+            if time.time() < unblock_time:
+                return False
+            else:
+                # Блокировка истекла, удаляем
+                del _blocked_users[user_id]
+    
+    # Выбираем соответствующий лимитер
+    if operation_type == "heavy":
+        limiter = _heavy_operation_limiter
+    elif operation_type == "file_upload":
+        limiter = _file_upload_limiter
+    else:
+        limiter = _rate_limiter
+    
+    # Проверяем лимит
+    is_allowed = await limiter.is_allowed(user_id)
+    
+    # Если лимит превышен, блокируем пользователя на короткое время
+    if not is_allowed:
+        async with _block_lock:
+            _blocked_users[user_id] = time.time() + BLOCK_DURATION
+    
+    return is_allowed
 
 
 async def get_remaining_requests(user_id: int, operation_type: str = "default") -> int:
@@ -212,3 +233,15 @@ async def get_remaining_requests(user_id: int, operation_type: str = "default") 
 async def cleanup_rate_limiter() -> None:
     """Очищает неактивных пользователей из rate limiter (async версия)."""
     await _rate_limiter.cleanup_old_users()
+    await _heavy_operation_limiter.cleanup_old_users()
+    await _file_upload_limiter.cleanup_old_users()
+    
+    # Очищаем истекшие блокировки
+    async with _block_lock:
+        now = time.time()
+        expired_users = [
+            user_id for user_id, unblock_time in _blocked_users.items()
+            if now >= unblock_time
+        ]
+        for user_id in expired_users:
+            del _blocked_users[user_id]

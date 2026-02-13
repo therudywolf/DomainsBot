@@ -133,7 +133,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
             except (BrokenPipeError, OSError):
                 # Клиент закрыл соединение до получения ответа - это нормально
-                logger.debug("Client closed connection before response sent for domain: %s", domain)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Client closed connection before response sent for domain: %s", domain)
                 return
             
         except subprocess.TimeoutExpired:
@@ -141,22 +142,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 self.send_error(504, "Check timeout")
             except (BrokenPipeError, OSError):
-                logger.debug("Client closed connection during timeout error for domain: %s", domain)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Client closed connection during timeout error for domain: %s", domain)
         except subprocess.CalledProcessError as e:
             logger.error("Process error checking domain %s: %s", domain, e)
             try:
                 self.send_error(500, "Check failed: %s" % str(e))
             except (BrokenPipeError, OSError):
-                logger.debug("Client closed connection during process error for domain: %s", domain)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Client closed connection during process error for domain: %s", domain)
         except (BrokenPipeError, OSError) as e:
             # Клиент закрыл соединение - это не критическая ошибка
-            logger.debug("Client closed connection for domain %s: %s", domain, e)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Client closed connection for domain %s: %s", domain, e)
         except Exception as e:
             logger.error("Unexpected error checking domain %s: %s", domain, e, exc_info=True)
             try:
                 self.send_error(500, "Internal error: %s" % str(e))
             except (BrokenPipeError, OSError):
-                logger.debug("Client closed connection during error handling for domain: %s", domain)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Client closed connection during error handling for domain: %s", domain)
 
     def log_message(self, format, *args):
         """Переопределяем логирование для подавления стандартных сообщений."""

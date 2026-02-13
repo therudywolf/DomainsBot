@@ -33,16 +33,13 @@ check_domain() {
   fi
 
   # 2) Разбираем каждый PEM-сертификат в цепочке
-  awk '
-    /-----BEGIN CERTIFICATE-----/ {cert=$0; next}
-    /-----END CERTIFICATE-----/   {print cert ORS $0; cert=""; next}
-    {cert=cert ORS $0}
-  ' <<<"$chain" | while read -r pem; do
-      [[ -z $pem ]] && continue
+  # Используем более эффективный способ обработки сертификатов
+  while IFS= read -r pem_block; do
+      [[ -z $pem_block ]] && continue
       
       # Парсим сертификат
       local cert_txt
-      cert_txt=$(openssl x509 -noout -text 2>/dev/null <<<"$pem" || true)
+      cert_txt=$(openssl x509 -noout -text 2>/dev/null <<<"$pem_block" || true)
       [[ -z $cert_txt ]] && continue
 
       # Проверяем на GOST алгоритм (OID 1.2.643.* или упоминание GOST)
@@ -56,7 +53,13 @@ check_domain() {
         # Если еще не определили вердикт, ставим RUS CA
         [[ -z $verdict ]] && verdict="RUS CA"
       fi
-  done
+  done < <(
+    awk '
+      /-----BEGIN CERTIFICATE-----/ {cert=$0; next}
+      /-----END CERTIFICATE-----/   {print cert ORS $0; cert=""; next}
+      {cert=cert ORS $0}
+    ' <<<"$chain"
+  )
 
   # Если вердикт не определен, значит foreign CA
   [[ -z $verdict ]] && verdict="foreign CA"

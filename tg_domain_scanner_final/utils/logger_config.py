@@ -78,3 +78,13 @@ def setup_logging(
     bot_logger = logging.getLogger("__main__")
     bot_logger.setLevel(numeric_level)
 
+
+def is_debug_enabled() -> bool:
+    """
+    Проверяет, включен ли уровень DEBUG логирования.
+    
+    Returns:
+        True если DEBUG логирование включено
+    """
+    return logging.getLogger().isEnabledFor(logging.DEBUG)
+

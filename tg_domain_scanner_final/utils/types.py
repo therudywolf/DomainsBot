@@ -111,3 +111,7 @@ class CacheBackend(Protocol):
         """Удаляет значение по ключу."""
         ...
 
+
+
+
+

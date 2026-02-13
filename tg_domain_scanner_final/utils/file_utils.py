@@ -75,7 +75,7 @@ async def async_read_json(file_path: Path, default: Optional[Dict[str, Any]] = N
             logger.error(f"Ошибка при чтении JSON файла {file_path}: {e}")
             return default
     
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _read)
 
 
@@ -127,7 +127,7 @@ async def async_read_text(file_path: Path, default: str = "") -> str:
             logger.error(f"Ошибка при чтении текстового файла {file_path}: {e}")
             return default
     
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _read)
 
 
@@ -154,4 +154,8 @@ async def async_write_text(file_path: Path, content: str) -> bool:
     
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _write)
+
+
+
+
 
