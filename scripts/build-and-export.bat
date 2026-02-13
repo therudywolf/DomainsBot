@@ -313,6 +313,7 @@ if not exist "GostSSLCheck" (
 )
 
 echo   - Копирование docker-compose.yml...
+REM ВАЖНО: Используем docker-compose.yml из корня (с правильными путями для экспорта)
 copy docker-compose.yml "%EXPORT_DIR%\project\"
 if errorlevel 1 (
     echo [ERROR] Ошибка при копировании docker-compose.yml
@@ -344,6 +345,11 @@ if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\bot.py" (
     echo     [OK] tg_domain_scanner_final скопирован (проверен bot.py)
     echo [DEBUG] Проверка количества скопированных файлов:
     dir /s /b "%EXPORT_DIR%\project\tg_domain_scanner_final\*.py" | find /c ".py"
+    REM Исключаем внутренний docker-compose.yml из tg_domain_scanner_final (используем корневой)
+    if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\docker-compose.yml" (
+        del "%EXPORT_DIR%\project\tg_domain_scanner_final\docker-compose.yml" >nul 2>&1
+        echo     [OK] Удален внутренний docker-compose.yml (используется корневой)
+    )
 ) else (
     echo     [ERROR] bot.py не найден в скопированной директории!
     echo [DEBUG] Содержимое целевой директории:
@@ -470,11 +476,35 @@ REM Удаляем .pyc файлы
 for /r "%EXPORT_DIR%\project" %%f in (*.pyc) do @if exist "%%f" del /q "%%f" 2>nul
 echo     [OK] Удалены .pyc файлы
 
-REM Проверяем наличие wireguard_utils.py
+REM Проверяем наличие важных файлов WireGuard
+echo   - Проверка файлов WireGuard...
 if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\utils\wireguard_utils.py" (
     echo     [OK] wireguard_utils.py найден в экспорте
 ) else (
     echo     [WARNING] wireguard_utils.py НЕ найден в экспорте!
+)
+
+REM Проверяем что Dockerfile содержит wireguard-tools
+findstr /C:"wireguard-tools" "%EXPORT_DIR%\project\tg_domain_scanner_final\Dockerfile" >nul 2>&1
+if not errorlevel 1 (
+    echo     [OK] Dockerfile содержит wireguard-tools
+) else (
+    echo     [WARNING] Dockerfile не содержит wireguard-tools!
+)
+
+REM Проверяем что docker-compose.yml содержит настройки WireGuard
+findstr /C:"NET_ADMIN" "%EXPORT_DIR%\project\docker-compose.yml" >nul 2>&1
+if not errorlevel 1 (
+    echo     [OK] docker-compose.yml содержит настройки WireGuard (NET_ADMIN, /dev/net/tun)
+) else (
+    echo     [WARNING] docker-compose.yml не содержит настроек WireGuard!
+)
+
+REM Проверяем что директория wg/ скопирована
+if exist "%EXPORT_DIR%\project\wg" (
+    echo     [OK] Директория wg/ скопирована в экспорт
+) else (
+    echo     [WARNING] Директория wg/ не скопирована (создастся при развертывании)
 )
 
 echo.

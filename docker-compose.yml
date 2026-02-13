@@ -48,6 +48,10 @@ services:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
     volumes:
       - ./data:/app/data
-      # Монтируем директорию wg/ для доступа к конфигу WireGuard (если существует)
-      # Путь работает и в разработке (./wg) и в экспорте (./wg)
+      # WireGuard: монтируем wg/ для конфига и /dev/net/tun для создания интерфейсов
       - ./wg:/app/wg:ro
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN  # Необходимо для создания сетевых интерфейсов (WireGuard)
+    sysctls:
+      - net.ipv4.ip_forward=1  # Разрешаем форвардинг пакетов для VPN

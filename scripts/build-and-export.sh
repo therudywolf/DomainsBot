@@ -162,8 +162,12 @@ echo ""
 echo "📋 Шаг 4: Копирование файлов проекта..."
 
 # Копируем основные файлы и директории
+# ВАЖНО: Используем docker-compose.yml из корня (с правильными путями для экспорта)
 cp docker-compose.yml "$EXPORT_DIR/project/"
+# Копируем tg_domain_scanner_final (включает Dockerfile с wireguard-tools и все утилиты)
 cp -r tg_domain_scanner_final "$EXPORT_DIR/project/"
+# Исключаем внутренний docker-compose.yml из tg_domain_scanner_final (используем корневой)
+rm -f "$EXPORT_DIR/project/tg_domain_scanner_final/docker-compose.yml" 2>/dev/null || true
 cp -r GostSSLCheck "$EXPORT_DIR/project/"
 
 # Копируем директорию wg/ если она существует (для WireGuard конфига)
@@ -209,11 +213,33 @@ rm -rf "$EXPORT_DIR/project/tg_domain_scanner_final/**/__pycache__" 2>/dev/null 
 find "$EXPORT_DIR/project" -name "*.pyc" -delete 2>/dev/null || true
 find "$EXPORT_DIR/project" -name ".pytest_cache" -type d -exec rm -rf {} + 2>/dev/null || true
 
-# Проверяем наличие wireguard_utils.py
+# Проверяем наличие важных файлов WireGuard
+echo "  - Проверка файлов WireGuard..."
 if [ ! -f "$EXPORT_DIR/project/tg_domain_scanner_final/utils/wireguard_utils.py" ]; then
-    echo "  ⚠️  Предупреждение: wireguard_utils.py не найден в экспорте!"
+    echo "    ⚠️  Предупреждение: wireguard_utils.py не найден в экспорте!"
 else
-    echo "  ✅ wireguard_utils.py найден в экспорте"
+    echo "    ✅ wireguard_utils.py найден в экспорте"
+fi
+
+# Проверяем что Dockerfile содержит wireguard-tools
+if grep -q "wireguard-tools" "$EXPORT_DIR/project/tg_domain_scanner_final/Dockerfile" 2>/dev/null; then
+    echo "    ✅ Dockerfile содержит wireguard-tools"
+else
+    echo "    ⚠️  Предупреждение: Dockerfile не содержит wireguard-tools!"
+fi
+
+# Проверяем что docker-compose.yml содержит настройки WireGuard
+if grep -q "NET_ADMIN\|/dev/net/tun" "$EXPORT_DIR/project/docker-compose.yml" 2>/dev/null; then
+    echo "    ✅ docker-compose.yml содержит настройки WireGuard (NET_ADMIN, /dev/net/tun)"
+else
+    echo "    ⚠️  Предупреждение: docker-compose.yml не содержит настроек WireGuard!"
+fi
+
+# Проверяем что директория wg/ скопирована
+if [ -d "$EXPORT_DIR/project/wg" ]; then
+    echo "    ✅ Директория wg/ скопирована в экспорт"
+else
+    echo "    ⚠️  Предупреждение: Директория wg/ не скопирована (создастся при развертывании)"
 fi
 
 echo "✅ Файлы проекта скопированы"
