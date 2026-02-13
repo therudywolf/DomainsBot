@@ -88,7 +88,7 @@ def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
         True если домен добавлен, False если уже был в мониторинге
     """
     with _monitoring_lock:
-        db = _load_monitoring_db()
+        db = _load_monitoring_db_sync()
         
         user_key = str(user_id)
         if user_key not in db:
@@ -198,7 +198,7 @@ def set_monitoring_enabled(user_id: int, enabled: bool) -> None:
         enabled: Включен ли мониторинг
     """
     with _monitoring_lock:
-        db = _load_monitoring_db()
+        db = _load_monitoring_db_sync()
         user_key = str(user_id)
         if user_key not in db:
             db[user_key] = {
@@ -208,7 +208,7 @@ def set_monitoring_enabled(user_id: int, enabled: bool) -> None:
             }
         else:
             db[user_key]["enabled"] = enabled
-        _save_monitoring_db(db)
+        _save_monitoring_db_sync(db)
 
 
 def is_monitoring_enabled(user_id: int) -> bool:

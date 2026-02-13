@@ -332,6 +332,25 @@ def get_access_list() -> dict:
     return load_access_db()
 
 
+async def get_username_by_id(bot: Bot, user_id: int) -> Optional[str]:
+    """
+    Получает актуальный username пользователя по его ID через Telegram API.
+    
+    Args:
+        bot: Экземпляр бота
+        user_id: ID пользователя
+        
+    Returns:
+        Username пользователя или None если не удалось получить
+    """
+    try:
+        chat = await bot.get_chat(user_id)
+        return chat.username if chat.username else None
+    except Exception as e:
+        logger.debug(f"Не удалось получить username для пользователя {user_id}: {e}")
+        return None
+
+
 # ---------- FSM для админ команд ----------
 
 class AdminStates(StatesGroup):
@@ -616,6 +635,12 @@ def build_admin_keyboard() -> types.InlineKeyboardMarkup:
                 types.InlineKeyboardButton(
                     text="🔐 Управление разрешениями",
                     callback_data="admin_manage_permissions",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="📤 Экспорт пользователей",
+                    callback_data="admin_export_users",
                 ),
             ],
             [
@@ -3335,24 +3360,45 @@ async def admin_list_access(callback: types.CallbackQuery):
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
+    await callback.answer("⏳ Загрузка списка пользователей...")
+    
     db = get_access_list()
     
     if not db:
         await callback.message.answer("📋 БД доступов пуста")
-        await callback.answer()
         return
+    
+    bot = callback.message.bot if callback.message else callback.bot
     
     # Форматируем список с разрешениями
     lines = ["📋 *Список пользователей и их разрешения:*\n"]
     
-    for user_id, data in sorted(db.items()):
-        username = data.get("username", "")
+    # Получаем актуальные юзернеймы для всех пользователей
+    user_ids = [int(user_id) for user_id in db.keys() if str(user_id).isdigit()]
+    
+    # Получаем юзернеймы параллельно
+    username_tasks = [get_username_by_id(bot, user_id) for user_id in user_ids]
+    usernames = await asyncio.gather(*username_tasks, return_exceptions=True)
+    
+    # Создаем словарь user_id -> username
+    username_map = {}
+    for user_id, username_result in zip(user_ids, usernames):
+        if isinstance(username_result, str):
+            username_map[user_id] = username_result
+        elif isinstance(username_result, Exception):
+            logger.debug(f"Ошибка получения username для {user_id}: {username_result}")
+    
+    for user_id, data in sorted(db.items(), key=lambda x: (int(x[0]) if str(x[0]).isdigit() else 0)):
+        # Используем актуальный username из API, если доступен, иначе из БД
+        uid = int(user_id) if str(user_id).isdigit() else 0
+        current_username = username_map.get(uid) or data.get("username", "")
+        
         added_at = data.get("added_at", "")
         permissions = data.get("permissions", DEFAULT_PERMISSIONS.copy())
         
         user_info = f"*ID: {user_id}*"
-        if username:
-            user_info += f" (@{username})"
+        if current_username:
+            user_info += f" (@{current_username})"
         if added_at:
             user_info += f"\nДобавлен: {added_at[:10]}"
         
@@ -3376,8 +3422,6 @@ async def admin_list_access(callback: types.CallbackQuery):
         )
     else:
         await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
-    
-    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_manage_permissions")
@@ -3387,28 +3431,46 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
         await callback.answer("❌ Только администратор", show_alert=True)
         return
     
+    await callback.answer("⏳ Загрузка списка пользователей...")
+    
     await state.set_state(AdminStates.manage_permissions_user_waiting)
     
     db = get_access_list()
     if not db:
         await callback.message.answer("❌ Нет пользователей в базе. Сначала добавьте пользователя.")
         await state.clear()
-        await callback.answer()
         return
+    
+    bot = callback.message.bot if callback.message else callback.bot
+    
+    # Получаем актуальные юзернеймы для всех пользователей
+    user_ids = [int(user_id) for user_id in db.keys() if str(user_id).isdigit()]
+    
+    # Получаем юзернеймы параллельно
+    username_tasks = [get_username_by_id(bot, user_id) for user_id in user_ids]
+    usernames = await asyncio.gather(*username_tasks, return_exceptions=True)
+    
+    # Создаем словарь user_id -> username
+    username_map = {}
+    for user_id, username_result in zip(user_ids, usernames):
+        if isinstance(username_result, str):
+            username_map[user_id] = username_result
+        elif isinstance(username_result, Exception):
+            logger.debug(f"Ошибка получения username для {user_id}: {username_result}")
     
     # Формируем список пользователей
     users_list = "👥 *Выберите пользователя для управления разрешениями:*\n\n"
-    for user_id, data in sorted(db.items()):
-        username = data.get("username", "")
+    for user_id, data in sorted(db.items(), key=lambda x: (int(x[0]) if str(x[0]).isdigit() else 0)):
+        uid = int(user_id) if str(user_id).isdigit() else 0
+        current_username = username_map.get(uid) or data.get("username", "")
         user_display = f"ID: {user_id}"
-        if username:
-            user_display += f" (@{username})"
+        if current_username:
+            user_display += f" (@{current_username})"
         users_list += f"• {user_display}\n"
     
     users_list += "\nВведите TG ID пользователя:"
     
     await callback.message.answer(users_list, parse_mode=ParseMode.MARKDOWN)
-    await callback.answer()
 
 
 @router.message(AdminStates.manage_permissions_user_waiting)
@@ -3437,7 +3499,12 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
     # Получаем текущие разрешения
     permissions = get_user_permissions(user_id)
     user_data = db[str(user_id)]
-    username = user_data.get("username", "")
+    
+    # Получаем актуальный username через API
+    bot = message.bot
+    current_username = await get_username_by_id(bot, user_id)
+    if not current_username:
+        current_username = user_data.get("username", "")
     
     # Формируем клавиатуру с разрешениями
     keyboard_buttons = []
@@ -3461,8 +3528,8 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     user_display = f"ID: {user_id}"
-    if username:
-        user_display += f" (@{username})"
+    if current_username:
+        user_display += f" (@{current_username})"
     
     text_msg = (
         f"🔐 *Управление разрешениями*\n\n"
@@ -3535,6 +3602,78 @@ async def toggle_permission(callback: types.CallbackQuery):
             pass
     else:
         await callback.answer("❌ Ошибка при изменении разрешения", show_alert=True)
+
+
+@router.callback_query(F.data == "admin_export_users")
+async def admin_export_users(callback: types.CallbackQuery):
+    """Экспортирует список пользователей в формате JSON для удобного переноса."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    await callback.answer("⏳ Подготовка экспорта...")
+    
+    db = get_access_list()
+    
+    if not db:
+        await callback.message.answer("📋 БД доступов пуста")
+        return
+    
+    bot = callback.message.bot if callback.message else callback.bot
+    
+    # Получаем актуальные юзернеймы для всех пользователей
+    user_ids = [int(user_id) for user_id in db.keys() if str(user_id).isdigit()]
+    
+    # Получаем юзернеймы параллельно
+    username_tasks = [get_username_by_id(bot, user_id) for user_id in user_ids]
+    usernames = await asyncio.gather(*username_tasks, return_exceptions=True)
+    
+    # Создаем словарь user_id -> username
+    username_map = {}
+    for user_id, username_result in zip(user_ids, usernames):
+        if isinstance(username_result, str):
+            username_map[user_id] = username_result
+    
+    # Формируем данные для экспорта
+    export_data = {}
+    for user_id, data in sorted(db.items(), key=lambda x: (int(x[0]) if str(x[0]).isdigit() else 0)):
+        uid = int(user_id) if str(user_id).isdigit() else 0
+        current_username = username_map.get(uid) or data.get("username", "")
+        
+        export_data[user_id] = {
+            "user_id": int(user_id) if str(user_id).isdigit() else user_id,
+            "username": current_username,
+            "added_at": data.get("added_at", ""),
+            "permissions": data.get("permissions", DEFAULT_PERMISSIONS.copy()),
+        }
+    
+    # Формируем JSON
+    json_data = json.dumps(export_data, ensure_ascii=False, indent=2, default=str)
+    
+    # Формируем текстовый формат для удобного копирования
+    text_lines = ["📤 *Экспорт пользователей*\n\n"]
+    text_lines.append("Формат для добавления:\n")
+    text_lines.append("```")
+    
+    for user_id, user_data in export_data.items():
+        uid = user_data["user_id"]
+        username = user_data["username"]
+        text_lines.append(f"{uid}  # @{username}" if username else f"{uid}")
+    
+    text_lines.append("```")
+    text_lines.append("\nИли используйте JSON файл ниже для полного переноса.")
+    
+    text_msg = "\n".join(text_lines)
+    
+    # Отправляем текстовое сообщение
+    await callback.message.answer(text_msg, parse_mode=ParseMode.MARKDOWN)
+    
+    # Отправляем JSON файл
+    json_bytes = json_data.encode("utf-8")
+    buf = io.BytesIO(json_bytes)
+    await callback.message.answer_document(
+        types.BufferedInputFile(buf.getvalue(), filename="users_export.json")
+    )
 
 
 @router.callback_query(F.data == "admin_back")
