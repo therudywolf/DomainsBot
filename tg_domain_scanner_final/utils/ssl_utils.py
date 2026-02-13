@@ -109,11 +109,73 @@ def _get_gost_connector() -> aiohttp.TCPConnector:
     return _gost_connector
 
 
+async def _check_single_endpoint(url: str, domain: str, timeout: int) -> tuple[Optional[bool], Optional[Exception], bool]:
+    """
+    Проверяет один GOST endpoint.
+    
+    Returns:
+        Кортеж (результат, ошибка, is_504):
+        - результат: True/False если успешно, None если ошибка
+        - ошибка: объект исключения или None
+        - is_504: True если это была ошибка 504
+    """
+    local_connector = None
+    try:
+        local_connector = aiohttp.TCPConnector(
+            limit=10,
+            limit_per_host=3,
+            force_close=True,
+            ttl_dns_cache=300,
+        )
+        
+        timeout_obj = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(
+            timeout=timeout_obj,
+            connector=local_connector
+        ) as session:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Проверка GOST для {domain} через {url}")
+            
+            async with session.get(url, params={"domain": domain}) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    result = bool(data.get("is_gost"))
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"GOST проверка для {domain}: {result} (через {url})")
+                    return result, None, False
+                elif resp.status == 504:
+                    logger.warning(f"GOST endpoint {url} вернул 504 (Gateway Timeout) для {domain}")
+                    return None, Exception(f"HTTP 504"), True
+                else:
+                    logger.warning(f"GOST endpoint {url} вернул статус {resp.status} для {domain}")
+                    return None, Exception(f"HTTP {resp.status}"), False
+    except asyncio.TimeoutError:
+        logger.warning(f"Таймаут при проверке GOST для {domain} через {url}")
+        return None, asyncio.TimeoutError("Timeout"), False
+    except (aiohttp.ClientError, RuntimeError) as e:
+        error_msg = str(e)
+        if "Session is closed" in error_msg or "Connector is closed" in error_msg:
+            logger.warning(f"Соединение закрыто при проверке GOST для {domain} через {url}: {e}")
+        else:
+            logger.warning(f"Ошибка клиента при проверке GOST для {domain} через {url}: {e}")
+        return None, e, False
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка при проверке GOST для {domain} через {url}: {e}", exc_info=True)
+        return None, e, False
+    finally:
+        if local_connector is not None and not local_connector.closed:
+            try:
+                await local_connector.close()
+            except Exception as e:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Ошибка при закрытии connector: {e}")
+
+
 async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optional[bool]:
     """Проверяет наличие GOST сертификата через удаленные контейнеры.
     
-    Использует retry логику: пробует все доступные endpoints по очереди,
-    если один не отвечает, переключается на следующий.
+    Использует параллельные запросы ко всем endpoints с общим таймаутом.
+    Если все endpoints вернули 504, пробует через WireGuard.
     
     Args:
         domain: Домен для проверки
@@ -127,97 +189,102 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
         return None
 
     timeout = timeout or settings.GOST_CHECK_TIMEOUT
-    timeout_obj = aiohttp.ClientTimeout(total=timeout)
+    # Уменьшаем таймаут для каждого endpoint, но увеличиваем общий таймаут
+    endpoint_timeout = min(timeout, 10)  # Максимум 10 секунд на endpoint
+    # Общий таймаут: endpoint_timeout + небольшой запас
+    total_timeout = endpoint_timeout + 2
     
     # Перемешиваем endpoints для распределения нагрузки
     endpoints = _endpoints.copy()
     random.shuffle(endpoints)
     
-    last_error: Optional[Exception] = None
-    all_504_errors = True  # Флаг для отслеживания массовых 504
+    # Создаем задачи для параллельных запросов
+    tasks = [
+        asyncio.create_task(_check_single_endpoint(url, domain, endpoint_timeout))
+        for url in endpoints
+    ]
     
-    # Пробуем каждый endpoint с ограничением времени
-    max_total_time = timeout * len(endpoints)  # Максимальное время на все попытки
-    start_time = asyncio.get_running_loop().time()
-    
-    for attempt, url in enumerate(endpoints, 1):
-        # Проверяем, не превысили ли общий таймаут
-        elapsed = asyncio.get_running_loop().time() - start_time
-        if elapsed >= max_total_time:
-            logger.warning(f"Превышен общий таймаут для проверки GOST {domain} ({elapsed:.2f}s)")
-            break
-            
-        local_connector = None
-        try:
-            # Создаем новый connector для каждой попытки, чтобы избежать проблем с закрытием
-            # Используем локальный connector вместо глобального для изоляции
-            local_connector = aiohttp.TCPConnector(
-                limit=10,
-                limit_per_host=3,
-                force_close=True,  # Закрываем соединения после использования
-                ttl_dns_cache=300,
-            )
-            
-            async with aiohttp.ClientSession(
-                timeout=timeout_obj,
-                connector=local_connector
-            ) as session:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Проверка GOST для {domain} через {url} (попытка {attempt}/{len(endpoints)})")
-                
-                try:
-                    async with session.get(url, params={"domain": domain}) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            result = bool(data.get("is_gost"))
-                            if logger.isEnabledFor(logging.DEBUG):
-                                logger.debug(f"GOST проверка для {domain}: {result} (через {url})")
-                            all_504_errors = False  # Успешный ответ, не все 504
-                            return result
-                        elif resp.status == 504:
-                            logger.warning(f"GOST endpoint {url} вернул 504 (Gateway Timeout) для {domain}")
-                            last_error = Exception(f"HTTP 504")
-                            # Продолжаем попытки, но отмечаем что это 504
-                        else:
-                            logger.warning(f"GOST endpoint {url} вернул статус {resp.status} для {domain}")
-                            last_error = Exception(f"HTTP {resp.status}")
-                            all_504_errors = False  # Другая ошибка, не все 504
-                except RuntimeError as e:
-                    if "Session is closed" in str(e):
-                        logger.warning(f"Сессия закрыта для {domain} через {url}, пропускаем")
-                        last_error = e
-                    else:
-                        raise
-        except asyncio.TimeoutError:
-            logger.warning(f"Таймаут при проверке GOST для {domain} через {url}")
-            last_error = asyncio.TimeoutError("Timeout")
-            all_504_errors = False  # Таймаут - не 504, не используем прокси
-        except (aiohttp.ClientError, RuntimeError) as e:
-            error_msg = str(e)
-            if "Session is closed" in error_msg or "Connector is closed" in error_msg:
-                logger.warning(f"Соединение закрыто при проверке GOST для {domain} через {url}: {e}")
-            else:
-                logger.warning(f"Ошибка клиента при проверке GOST для {domain} через {url}: {e}")
-            last_error = e
-            all_504_errors = False  # Ошибка соединения - не 504, не используем прокси
-        except Exception as e:
-            logger.error(f"Неожиданная ошибка при проверке GOST для {domain} через {url}: {e}", exc_info=True)
-            last_error = e
-        finally:
-            # Закрываем connector после использования
-            if local_connector is not None and not local_connector.closed:
-                try:
-                    await local_connector.close()
-                except Exception as e:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Ошибка при закрытии connector: {e}")
+    try:
+        # Ждем первый успешный ответ или таймаут
+        done, pending = await asyncio.wait(
+            tasks,
+            timeout=total_timeout,
+            return_when=asyncio.FIRST_COMPLETED
+        )
         
-        # Небольшая задержка перед следующей попыткой (только если не последняя)
-        if attempt < len(endpoints):
-            await asyncio.sleep(settings.GOST_RETRY_DELAY)
+        # Проверяем завершенные задачи
+        all_504_errors = True
+        last_error: Optional[Exception] = None
+        checked_endpoints = 0  # Счетчик проверенных endpoints
+        
+        for task in done:
+            try:
+                result, error, is_504 = await task
+                checked_endpoints += 1
+                if result is not None:
+                    # Успешный ответ - отменяем остальные задачи и возвращаем результат
+                    # WireGuard НЕ используется - основной путь работает
+                    for t in pending:
+                        t.cancel()
+                    return result
+                if error:
+                    last_error = error
+                    if not is_504:
+                        all_504_errors = False  # Хотя бы один endpoint вернул не 504
+            except Exception as e:
+                logger.warning(f"Ошибка при обработке результата от endpoint: {e}")
+                last_error = e
+                all_504_errors = False
+                checked_endpoints += 1
+        
+        # Если есть еще незавершенные задачи, ждем их с коротким таймаутом
+        if pending:
+            try:
+                done_remaining, _ = await asyncio.wait(
+                    pending,
+                    timeout=2.0,
+                    return_when=asyncio.ALL_COMPLETED
+                )
+                for task in done_remaining:
+                    try:
+                        result, error, is_504 = await task
+                        checked_endpoints += 1
+                        if result is not None:
+                            # Успешный ответ - WireGuard НЕ используется
+                            return result
+                        if error:
+                            last_error = error
+                            if not is_504:
+                                all_504_errors = False  # Хотя бы один endpoint вернул не 504
+                    except Exception:
+                        checked_endpoints += 1
+                        pass
+            except Exception:
+                pass
+            
+            # Отменяем оставшиеся задачи
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+                    checked_endpoints += 1
+        
+    except asyncio.TimeoutError:
+        logger.warning(f"Общий таймаут ({total_timeout}s) при проверке GOST для {domain}")
+        # Отменяем все задачи
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        # При таймауте не используем WireGuard (это не 504 ошибки)
+        all_504_errors = False
+        last_error = asyncio.TimeoutError("Total timeout")
+        checked_endpoints = len(endpoints)  # Все задачи были отменены
     
-    # Если все endpoints вернули 504 - пробуем через WireGuard
-    if all_504_errors:
+    # WireGuard используется ТОЛЬКО если:
+    # 1. Все проверенные endpoints вернули 504 (all_504_errors == True)
+    # 2. Проверены ВСЕ endpoints (checked_endpoints == len(endpoints))
+    # 3. Есть ошибка (last_error не None)
+    # Это гарантирует что WireGuard - резерв, а не основной путь
+    if all_504_errors and checked_endpoints == len(endpoints) and last_error:
         logger.info(f"Все endpoints вернули 504 для {domain}, пробуем через WireGuard подключение")
         try:
             # Поднимаем WireGuard интерфейс если не поднят

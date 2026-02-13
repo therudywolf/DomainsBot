@@ -100,7 +100,7 @@ from utils.monitoring import (
 # Импорт новых утилит
 from utils.rate_limiter import check_rate_limit, get_remaining_requests, cleanup_rate_limiter
 from utils.stats import record_domain_check, record_error, record_command, get_stats, reset_stats
-from utils.wireguard_utils import check_wg_connection, ensure_wg_interface_up
+from utils.wireguard_utils import check_wg_connection, ensure_wg_interface_up, ensure_wg_interface_down
 from utils.history import add_check_result, get_domain_history, get_user_history, cleanup_old_history
 from utils.logger_config import setup_logging
 
@@ -4226,36 +4226,62 @@ async def admin_check_wg(callback: types.CallbackQuery):
     lines = ["🔌 *Проверка WireGuard*\n"]
 
     if not status["wg_available"]:
-        lines.append(f"❌ {status['last_error']}")
-        lines.append("\n💡 _WireGuard работает только на хосте с wireguard-tools._")
-        lines.append("   _В Docker WG недоступен._")
+        lines.append("ℹ️ WireGuard недоступен")
+        lines.append(f"   _{status['last_error']}_")
+        lines.append("\n💡 *WireGuard нужен для резервного подключения*")
+        lines.append("   при массовых 504 ошибках от GOST endpoints.")
+        lines.append("\n   Для работы WireGuard:")
+        lines.append("   1. Убедитесь что конфиг есть: `wg/TGBOT.conf`")
+        if os.path.exists("/.dockerenv"):
+            lines.append("   2. В Docker: проверьте что контейнер запущен с:")
+            lines.append("      - `cap_add: NET_ADMIN`")
+            lines.append("      - `/dev/net/tun` смонтирован")
+        else:
+            lines.append("   2. На хосте: установите `apt install wireguard-tools`")
     else:
         if status["config_found"]:
             lines.append(f"✅ Конфиг: `{status['config_path']}`")
-            lines.append(f"   Интерфейс: {status['interface_name'] or '—'}")
-            lines.append(f"   IP: {status['interface_ip'] or '—'}")
+            lines.append(f"   Интерфейс: `{status['interface_name'] or '—'}`")
+            lines.append(f"   IP: `{status['interface_ip'] or '—'}`")
             if status["interface_up"]:
-                lines.append("   **Статус: 🟢 Поднят**")
+                lines.append("\n   **Статус: 🟢 Поднят**")
             else:
-                lines.append("   **Статус: 🔴 Не поднят**")
-                lines.append("\n   Пытаюсь поднять...")
-                if ensure_wg_interface_up():
-                    lines.append("   ✅ Интерфейс успешно поднят")
-                else:
-                    lines.append("   ❌ Не удалось поднять интерфейс")
-                    if status.get("last_error"):
-                        lines.append(f"   Ошибка: {status['last_error']}")
+                lines.append("\n   **Статус: 🔴 Не поднят**")
         else:
-            lines.append(f"❌ Конфиг не найден: {status['config_path']}")
+            lines.append(f"❌ Конфиг не найден: `{status['config_path']}`")
             if status.get("last_error"):
-                lines.append(f"   {status['last_error']}")
+                lines.append(f"   _{status['last_error']}_")
 
     text = "\n".join(lines)
-    back_kb = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
-        ]
-    )
+    
+    # Создаем клавиатуру с кнопками управления
+    keyboard_buttons = []
+    if status.get("wg_available") and status.get("config_found"):
+        if status.get("interface_up"):
+            keyboard_buttons.append([
+                types.InlineKeyboardButton(
+                    text="🔴 Опустить WireGuard",
+                    callback_data="admin_wg_down"
+                )
+            ])
+        else:
+            keyboard_buttons.append([
+                types.InlineKeyboardButton(
+                    text="🟢 Поднять WireGuard",
+                    callback_data="admin_wg_up"
+                )
+            ])
+        keyboard_buttons.append([
+            types.InlineKeyboardButton(
+                text="🔄 Обновить статус",
+                callback_data="admin_check_wg"
+            )
+        ])
+    keyboard_buttons.append([
+        types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")
+    ])
+    
+    back_kb = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     try:
         await callback.message.edit_text(
             text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_kb
@@ -4264,6 +4290,42 @@ async def admin_check_wg(callback: types.CallbackQuery):
         await callback.message.answer(
             text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_kb
         )
+
+
+@router.callback_query(F.data == "admin_wg_up")
+async def admin_wg_up(callback: types.CallbackQuery):
+    """Поднять WireGuard интерфейс."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    await callback.answer("⏳ Поднимаю WireGuard...")
+    
+    if ensure_wg_interface_up():
+        await callback.answer("✅ WireGuard успешно поднят!", show_alert=True)
+    else:
+        await callback.answer("❌ Не удалось поднять WireGuard", show_alert=True)
+    
+    # Обновляем статус
+    await admin_check_wg(callback)
+
+
+@router.callback_query(F.data == "admin_wg_down")
+async def admin_wg_down(callback: types.CallbackQuery):
+    """Опустить WireGuard интерфейс."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    await callback.answer("⏳ Опускаю WireGuard...")
+    
+    if ensure_wg_interface_down():
+        await callback.answer("✅ WireGuard успешно опущен!", show_alert=True)
+    else:
+        await callback.answer("❌ Не удалось опустить WireGuard", show_alert=True)
+    
+    # Обновляем статус
+    await admin_check_wg(callback)
 
 
 @router.callback_query(F.data == "admin_back")
@@ -4767,18 +4829,40 @@ async def main():
     start_monitoring(bot)
     logger.info("Мониторинг доменов запущен")
 
-    # Поднимаем WireGuard при старте (если конфиг доступен) — всегда держим поднятым
+    # Поднимаем WireGuard при старте (если конфиг доступен) — резерв при массовых 504
+    # WireGuard используется ТОЛЬКО если все GOST endpoints вернули 504 ошибки
+    # Основной функционал работает через обычные endpoints, WireGuard - только резерв
     try:
-        if ensure_wg_interface_up():
-            logger.info("WireGuard интерфейс поднят при старте")
+        wg_status = check_wg_connection()
+        if wg_status.get("wg_available") and wg_status.get("config_found"):
+            if ensure_wg_interface_up():
+                logger.info(f"✅ WireGuard интерфейс поднят при старте (резерв при 504): {wg_status.get('interface_name', '—')} ({wg_status.get('interface_ip', '—')})")
+            else:
+                logger.warning("⚠️ WireGuard конфиг найден, но интерфейс не поднят — резерв при 504 может не сработать")
+        elif wg_status.get("wg_available"):
+            logger.debug("ℹ️ WireGuard конфиг не найден — резервное подключение при 504 недоступно")
         else:
-            wg_status = check_wg_connection()
-            if wg_status.get("config_found"):
-                logger.warning("WireGuard конфиг найден, но интерфейс не поднят — резерв при 504 может не сработать")
-            elif wg_status.get("wg_available"):
-                logger.debug("WireGuard конфиг не найден — резервное подключение при 504 недоступно")
+            logger.debug(f"ℹ️ WireGuard недоступен: {wg_status.get('last_error', 'не установлен')} (это нормально, основной функционал работает без WG)")
     except Exception as e:
-        logger.warning(f"WireGuard при старте: {e}")
+        logger.warning(f"WireGuard при старте: {e} (не критично, основной функционал работает)")
+    
+    # Периодическая проверка и переподнятие WireGuard (каждые 5 минут)
+    async def periodic_wg_check():
+        """Периодически проверяет и переподнимает WireGuard если упал."""
+        while not _shutdown_event.is_set():
+            await asyncio.sleep(300)  # Каждые 5 минут
+            if not _shutdown_event.is_set():
+                try:
+                    wg_status = check_wg_connection()
+                    if wg_status.get("wg_available") and wg_status.get("config_found"):
+                        if not wg_status.get("interface_up"):
+                            logger.info("WireGuard интерфейс упал, пытаюсь переподнять...")
+                            if ensure_wg_interface_up():
+                                logger.info("✅ WireGuard интерфейс успешно переподнят")
+                            else:
+                                logger.warning("⚠️ Не удалось переподнять WireGuard интерфейс")
+                except Exception as e:
+                    logger.debug(f"Ошибка при периодической проверке WireGuard: {e}")
     
     # Периодическая очистка ресурсов (каждый час)
     async def periodic_cleanup():
@@ -4787,6 +4871,9 @@ async def main():
             await asyncio.sleep(3600)  # Каждый час
             if not _shutdown_event.is_set():
                 await cleanup_resources()
+    
+    # Запускаем периодическую проверку WireGuard
+    wg_check_task = asyncio.create_task(periodic_wg_check())
     
     # Запускаем периодическую очистку
     cleanup_task = asyncio.create_task(periodic_cleanup())
@@ -4812,8 +4899,13 @@ async def main():
         )
         record_error("BOT_CRITICAL_ERROR")
     finally:
-        # Ожидаем завершения периодической очистки
+        # Ожидаем завершения периодических задач
+        wg_check_task.cancel()
         cleanup_task.cancel()
+        try:
+            await wg_check_task
+        except asyncio.CancelledError:
+            pass
         try:
             await cleanup_task
         except asyncio.CancelledError:

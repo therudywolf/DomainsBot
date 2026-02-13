@@ -244,3 +244,47 @@ def ensure_wg_interface_up() -> bool:
     except Exception as e:
         logger.error(f"Ошибка при поднятии WireGuard интерфейса: {e}", exc_info=True)
         return False
+
+
+def ensure_wg_interface_down() -> bool:
+    """Опускает WireGuard интерфейс если он поднят.
+    
+    Returns:
+        True если интерфейс успешно опущен или уже был опущен, False при ошибке
+    """
+    interface_name, _ = _parse_wg_config()
+    if not interface_name:
+        logger.warning("Не удалось определить имя интерфейса WireGuard")
+        return False
+    
+    # Проверяем, не опущен ли уже интерфейс
+    if not is_wg_interface_up():
+        logger.debug("WireGuard интерфейс уже опущен")
+        return True
+    
+    try:
+        # Опускаем интерфейс через wg-quick
+        result = subprocess.run(
+            ["wg-quick", "down", interface_name],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"WireGuard интерфейс {interface_name} успешно опущен")
+            return True
+        else:
+            logger.warning(
+                f"Не удалось опустить WireGuard интерфейс {interface_name}: {result.stderr}"
+            )
+            return False
+    except FileNotFoundError:
+        logger.error("Утилита wg-quick не найдена. Установите WireGuard.")
+        return False
+    except subprocess.TimeoutExpired:
+        logger.error("Таймаут при опускании WireGuard интерфейса")
+        return False
+    except Exception as e:
+        logger.error(f"Ошибка при опускании WireGuard интерфейса: {e}", exc_info=True)
+        return False
