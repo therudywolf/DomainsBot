@@ -24,6 +24,7 @@ except ModuleNotFoundError:
 
 import asyncio
 import csv
+import html
 import io
 import json
 import logging
@@ -352,6 +353,31 @@ async def get_username_by_id(bot: Bot, user_id: int) -> Optional[str]:
         return chat.username if chat.username else None
     except Exception as e:
         logger.debug(f"Не удалось получить username для пользователя {user_id}: {e}")
+        return None
+
+
+async def get_id_by_username(bot: Bot, username: str) -> Optional[int]:
+    """
+    Получает ID пользователя по его @username через Telegram API.
+    Username может быть с @ или без.
+    
+    Args:
+        bot: Экземпляр бота
+        username: Username пользователя (с @ или без)
+        
+    Returns:
+        ID пользователя или None если не удалось получить
+    """
+    if not username or not username.strip():
+        return None
+    name = username.strip()
+    if not name.startswith("@"):
+        name = "@" + name
+    try:
+        chat = await bot.get_chat(name)
+        return chat.id if chat else None
+    except Exception as e:
+        logger.debug(f"Не удалось получить ID для username {name}: {e}")
         return None
 
 
@@ -3181,9 +3207,10 @@ async def admin_add_access(callback: types.CallbackQuery, state: FSMContext):
     
     await state.set_state(AdminStates.add_access_waiting)
     await callback.message.answer(
-        "📝 Введите TG ID пользователя(ей).\n\n"
+        "📝 Введите TG ID или @username пользователя(ей).\n\n"
         "Поддерживаемые форматы:\n"
         "• Простые числа: `123456789 987654321`\n"
+        "• @username: `@johndoe` или `johndoe`\n"
         "• Формат ID: `ID: 123456789`\n"
         "• Формат старого бота:\n"
         "`• ID: 123456789 - добавлен 2025-12-09`\n\n"
@@ -3192,7 +3219,7 @@ async def admin_add_access(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-def parse_user_list(text: str) -> List[Tuple[int, Optional[str]]]:
+def parse_user_list(text: str) -> List[Tuple[Optional[int], Optional[str], Optional[str]]]:
     """
     Парсит список пользователей из различных форматов.
     
@@ -3200,20 +3227,18 @@ def parse_user_list(text: str) -> List[Tuple[int, Optional[str]]]:
     - Формат старого бота: "• ID: 1027582338 - добавлен 2025-12-09"
     - Формат с ID: "ID: 1027582338"
     - Простые числа: "1027582338"
-    - Несколько чисел через пробел/запятую: "1027582338 127163336"
+    - @username: "@johndoe"
+    - Несколько через пробел/запятую
     
-    Args:
-        text: Текст со списком пользователей
-        
     Returns:
-        Список кортежей (user_id, date_added), где date_added может быть None
+        Список кортежей (user_id, username, date_added):
+        (user_id, None, date_added) для ID, (None, username, None) для @username
     """
-    users = []
+    users: List[Tuple[Optional[int], Optional[str], Optional[str]]] = []
     
     if not text:
         return users
     
-    # Регулярное выражение для формата старого бота: "• ID: 123456 - добавлен YYYY-MM-DD"
     old_bot_format = re.compile(
         r'(?:^|\n)[•\-\*]\s*ID:\s*(\d+)\s*(?:-\s*добавлен\s+(\d{4}-\d{2}-\d{2}))?',
         re.IGNORECASE | re.MULTILINE
@@ -3228,17 +3253,16 @@ def parse_user_list(text: str) -> List[Tuple[int, Optional[str]]]:
         for user_id_str, date_str in matches:
             try:
                 user_id = int(user_id_str)
-                users.append((user_id, date_str if date_str else None))
+                users.append((user_id, None, date_str if date_str else None))
             except ValueError:
                 continue
     
-    # Если не нашли формат старого бота, пробуем формат "ID: 123456"
     if not users:
         matches = id_format.findall(text)
         for user_id_str in matches:
             try:
                 user_id = int(user_id_str)
-                users.append((user_id, None))
+                users.append((user_id, None, None))
             except ValueError:
                 continue
     
@@ -3257,38 +3281,41 @@ def parse_user_list(text: str) -> List[Tuple[int, Optional[str]]]:
             for num_str in numbers:
                 try:
                     user_id = int(num_str)
-                    users.append((user_id, None))
+                    users.append((user_id, None, None))
                 except ValueError:
                     continue
     
-    # Если все еще ничего не нашли, пробуем простой парсинг через пробелы/запятые
     if not users:
         items = re.split(r'[\s,;]+', text.strip())
+        username_re = re.compile(r'^@?([a-zA-Z][a-zA-Z0-9_]{4,31})$')
         for item in items:
             item = item.strip()
             if not item:
                 continue
-            
-            # Пропускаем никнеймы
             if item.startswith("@"):
+                m = username_re.match(item)
+                if m:
+                    users.append((None, m.group(1), None))
                 continue
-            
-            # Пытаемся распарсить как число
             try:
                 user_id = int(item)
-                # Проверяем, что это похоже на Telegram ID (обычно 8+ цифр)
-                if user_id >= 100000000:  # Минимум 9 цифр
-                    users.append((user_id, None))
+                if user_id >= 100000000:
+                    users.append((user_id, None, None))
             except ValueError:
-                continue
+                pass
     
-    # Удаляем дубликаты, сохраняя порядок
-    seen = set()
+    # @username в тексте (regex)
+    if not any(u[1] for u in users):
+        for m in re.finditer(r'@([a-zA-Z][a-zA-Z0-9_]{4,31})', text):
+            users.append((None, m.group(1), None))
+    
+    seen: set = set()
     unique_users = []
-    for user_id, date_added in users:
-        if user_id not in seen:
-            seen.add(user_id)
-            unique_users.append((user_id, date_added))
+    for uid, uname, date in users:
+        key = (uid, uname)
+        if key not in seen:
+            seen.add(key)
+            unique_users.append((uid, uname, date))
     
     return unique_users
 
@@ -3301,21 +3328,48 @@ async def process_add_access(message: types.Message, state: FSMContext):
     
     text = message.text or ""
     
-    # Используем новый парсер списка пользователей
+    nav = _handle_admin_navigation(text)
+    if nav:
+        await state.clear()
+        if nav == "admin" and message.from_user and message.from_user.id == ADMIN_ID:
+            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
+            await safe_send_text(
+                message.bot,
+                message.chat.id,
+                help_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=build_admin_keyboard(),
+            )
+        else:
+            await cmd_start(message, state)
+        return
+    
     parsed_users = parse_user_list(text)
+    bot = message.bot
     
     added_count = 0
     errors = []
     added_users = []
     
-    for user_id, date_added in parsed_users:
+    for uid, username, date_added in parsed_users:
         try:
-            username = ""
-            add_access(user_id, username)
-            added_count += 1
-            added_users.append(user_id)
+            if uid is not None:
+                # Числовой ID
+                add_access(uid, "")
+                added_count += 1
+                added_users.append(uid)
+            elif username is not None:
+                # @username — резолвим в ID через API
+                resolved_id = await get_id_by_username(bot, username)
+                if resolved_id:
+                    add_access(resolved_id, username)
+                    added_count += 1
+                    added_users.append(resolved_id)
+                else:
+                    errors.append(f"⚠️ @{username} - не удалось найти пользователя")
         except Exception as e:
-            errors.append(f"❌ {user_id} - Ошибка при добавлении: {str(e)}")
+            err_id = uid if uid is not None else f"@{username or '?'}"
+            errors.append(f"❌ {err_id} - Ошибка при добавлении: {str(e)}")
     
     # Если парсер ничего не нашел, пробуем старый способ (для обратной совместимости)
     if not parsed_users:
@@ -3325,16 +3379,20 @@ async def process_add_access(message: types.Message, state: FSMContext):
             if not item:
                 continue
             
-            # Если начинается с @, то это никнейм - пропускаем (нужен ID)
+            # @username — пробуем резолвить
             if item.startswith("@"):
-                errors.append(f"⚠️ {item} - Требуется TG ID, не никнейм")
+                resolved_id = await get_id_by_username(bot, item)
+                if resolved_id:
+                    add_access(resolved_id, item[1:])
+                    added_count += 1
+                    added_users.append(resolved_id)
+                else:
+                    errors.append(f"⚠️ {item} - не удалось найти пользователя")
                 continue
             
-            # Пытаемся распарсить как число
             try:
                 user_id = int(item)
-                username = ""
-                add_access(user_id, username)
+                add_access(user_id, "")
                 added_count += 1
                 added_users.append(user_id)
             except ValueError:
@@ -3392,6 +3450,23 @@ async def process_remove_access(message: types.Message, state: FSMContext):
         return
     
     text = message.text or ""
+    
+    nav = _handle_admin_navigation(text)
+    if nav:
+        await state.clear()
+        if nav == "admin" and message.from_user and message.from_user.id == ADMIN_ID:
+            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
+            await safe_send_text(
+                message.bot,
+                message.chat.id,
+                help_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=build_admin_keyboard(),
+            )
+        else:
+            await cmd_start(message, state)
+        return
+    
     items = re.split(r"[\s,]+", text.strip())
     
     removed_count = 0
@@ -3558,9 +3633,22 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
             user_display += f" (@{current_username})"
         users_list += f"• {user_display}\n"
     
-    users_list += "\nВведите TG ID пользователя:"
+    users_list += "\nВведите TG ID или @username пользователя:"
     
     await callback.message.answer(users_list, parse_mode=ParseMode.MARKDOWN)
+
+
+def _handle_admin_navigation(text: str) -> Optional[str]:
+    """
+    Проверяет навигационную команду.
+    Returns: "back" | "admin" | None
+    """
+    t = (text or "").strip()
+    if t in ("🔙 Назад", "🏠 Главное меню"):
+        return "back"
+    if t == "👨‍💼 Админ-панель":
+        return "admin"
+    return None
 
 
 @router.message(AdminStates.manage_permissions_user_waiting)
@@ -3570,11 +3658,42 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
         return
     
     text = message.text or ""
-    try:
-        user_id = int(text.strip())
-    except ValueError:
-        await message.answer("❌ Некорректный ID. Введите числовой TG ID.")
+    
+    nav = _handle_admin_navigation(text)
+    if nav:
+        await state.clear()
+        if nav == "admin" and message.from_user and message.from_user.id == ADMIN_ID:
+            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
+            await safe_send_text(
+                message.bot,
+                message.chat.id,
+                help_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=build_admin_keyboard(),
+            )
+        else:
+            await cmd_start(message, state)
         return
+    
+    # Определяем user_id: число или @username
+    user_id = None
+    text_stripped = text.strip()
+    
+    if text_stripped.startswith("@"):
+        # Пытаемся получить ID по username
+        user_id = await get_id_by_username(message.bot, text_stripped)
+        if not user_id:
+            await message.answer(
+                f"❌ Не удалось найти пользователя {text_stripped}.\n"
+                "Проверьте username или введите числовой TG ID."
+            )
+            return
+    else:
+        try:
+            user_id = int(text_stripped)
+        except ValueError:
+            await message.answer("❌ Некорректный формат. Введите числовой TG ID или @username.")
+            return
     
     # Проверяем, что пользователь существует
     db = get_access_list()
@@ -3620,14 +3739,15 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
     user_display = f"ID: {user_id}"
     if current_username:
         user_display += f" (@{current_username})"
+    user_display_safe = html.escape(user_display)
     
     text_msg = (
-        f"🔐 *Управление разрешениями*\n\n"
-        f"Пользователь: {user_display}\n\n"
+        f"🔐 <b>Управление разрешениями</b>\n\n"
+        f"Пользователь: {user_display_safe}\n\n"
         f"Нажмите на разрешение для переключения:"
     )
     
-    await message.answer(text_msg, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+    await message.answer(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     await state.clear()
 
 
