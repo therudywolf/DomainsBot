@@ -19,10 +19,18 @@ _LOCK = RLock()
 
 @contextmanager
 def _shelf(write=False):
-    """Контекстный менеджер для работы с shelve БД."""
+    """Контекстный менеджер для работы с shelve БД.
+    
+    Args:
+        write: Если True, открывает БД с writeback=True для записи
+    """
     with _LOCK:
-        with shelve.open(str(_DB_PATH)) as db:
-            yield db
+        if write:
+            with shelve.open(str(_DB_PATH), writeback=True) as db:
+                yield db
+        else:
+            with shelve.open(str(_DB_PATH)) as db:
+                yield db
 
 
 def _get_user_key(user_id: int, key: str) -> str:

@@ -86,9 +86,14 @@ def _parse_wg_config() -> tuple[Optional[str], Optional[str]]:
         with open(config_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Извлекаем имя интерфейса из комментария # Name = ...
+        # Извлекаем имя интерфейса из комментария # Name = ... или из имени файла (TGBOT.conf -> TGBOT)
         name_match = re.search(r'#\s*Name\s*=\s*(\S+)', content)
-        interface_name = name_match.group(1) if name_match else _WG_INTERFACE_NAME
+        if name_match:
+            interface_name = name_match.group(1)
+        else:
+            # Fallback: имя из имени файла конфига (wg-quick использует это)
+            stem = config_path.stem
+            interface_name = stem if stem else _WG_INTERFACE_NAME
         
         # Извлекаем IP адрес из строки Address = ...
         address_match = re.search(r'Address\s*=\s*([\d.]+)', content)
@@ -137,6 +142,64 @@ def is_wg_interface_up() -> bool:
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         logger.debug(f"Ошибка при проверке статуса WireGuard интерфейса {interface_name}: {e}")
         return False
+
+
+def check_wg_connection() -> dict:
+    """Проверяет состояние WireGuard подключения (для админ-панели).
+    
+    Returns:
+        Словарь с ключами:
+        - config_found: bool - найден ли конфиг
+        - config_path: str - путь к конфигу
+        - interface_name: str | None
+        - interface_ip: str | None
+        - interface_up: bool - поднят ли интерфейс
+        - wg_available: bool - доступны ли wg/wg-quick
+        - last_error: str | None - последняя ошибка
+    """
+    result = {
+        "config_found": False,
+        "config_path": "",
+        "interface_name": None,
+        "interface_ip": None,
+        "interface_up": False,
+        "wg_available": False,
+        "last_error": None,
+    }
+    
+    # Проверяем доступность wg
+    try:
+        subprocess.run(
+            ["wg", "version"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        result["wg_available"] = True
+    except FileNotFoundError:
+        result["last_error"] = "wg/wg-quick не установлен (WireGuard недоступен)"
+        return result
+    except (subprocess.TimeoutExpired, OSError) as e:
+        result["last_error"] = f"Проверка wg: {e}"
+        return result
+    
+    config_path = _get_wg_config_path()
+    result["config_path"] = str(config_path)
+    
+    if not config_path.exists():
+        result["last_error"] = f"Конфиг не найден: {config_path}"
+        return result
+    
+    result["config_found"] = True
+    
+    interface_name, ip_address = _parse_wg_config()
+    result["interface_name"] = interface_name
+    result["interface_ip"] = ip_address
+    
+    if interface_name:
+        result["interface_up"] = is_wg_interface_up()
+    
+    return result
 
 
 def ensure_wg_interface_up() -> bool:

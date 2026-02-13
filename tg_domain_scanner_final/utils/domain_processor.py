@@ -139,7 +139,8 @@ async def check_single_domain(
             record_error("PROCESSING_ERROR")
             # Graceful degradation: показываем частичный результат даже при ошибке
             row = (domain, {}, {}, False, None)
-            error_msg = format_error_for_user(error_id, exc)
+            error_type = type(exc).__name__
+            error_msg = format_error_for_user(error_id, "PROCESSING_ERROR")
             line = f"❌ {domain}: {error_msg}"
             
             return line, row

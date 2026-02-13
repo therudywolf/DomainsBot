@@ -58,6 +58,20 @@ def _load_stats() -> Dict[str, Any]:
                 data["errors"] = Counter(data["errors"])
             if "commands_used" in data:
                 data["commands_used"] = Counter(data["commands_used"])
+            # Конвертируем activity_by_hour обратно в defaultdict
+            if "activity_by_hour" in data:
+                activity_dict = defaultdict(int)
+                activity_dict.update(data["activity_by_hour"])
+                data["activity_by_hour"] = activity_dict
+            else:
+                data["activity_by_hour"] = defaultdict(int)
+            # Конвертируем errors_by_type обратно в defaultdict
+            if "errors_by_type" in data:
+                errors_dict = defaultdict(int)
+                errors_dict.update(data["errors_by_type"])
+                data["errors_by_type"] = errors_dict
+            else:
+                data["errors_by_type"] = defaultdict(int)
             return data
     except Exception as e:
         logger.error(f"Ошибка при загрузке статистики: {e}")

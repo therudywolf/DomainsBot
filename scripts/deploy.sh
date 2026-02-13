@@ -5,7 +5,12 @@ set -euo pipefail
 # Использование: ./deploy.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)"
+# PROJECT_ROOT: если deploy.sh в scripts/ — родительская папка; если в project/ — текущая
+if [ -f "$SCRIPT_DIR/docker-compose.yml" ]; then
+    PROJECT_ROOT="$SCRIPT_DIR"
+else
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
 IMAGES_DIR="$PROJECT_ROOT/../images"
 PROJECT_DIR="$PROJECT_ROOT"
 

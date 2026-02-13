@@ -165,7 +165,7 @@ def remove_known_chat(user_id: int, chat_id: int) -> bool:
     data = _load_chat_settings()
     user_key = str(user_id)
     
-    if user_key not in data or user_key not in data:
+    if user_key not in data:
         return False
     
     known_chats = data[user_key].get("known_chats", [])

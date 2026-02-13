@@ -60,6 +60,6 @@ services:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
     volumes:
       - ./data:/app/data
-      # Монтируем директорию wg/ для доступа к конфигу WireGuard (если существует)
-      # Путь работает и в разработке (../wg) и в экспорте (./wg)
+      # WireGuard: монтируем wg/ для конфига. WG работает только на хосте с wireguard-tools.
+      # В Docker интерфейс поднять нельзя (нет wg-quick). Для WG — запуск бота на хосте.
       - ../wg:/app/wg:ro
