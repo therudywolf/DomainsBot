@@ -1,0 +1,27 @@
+services:
+  gostsslcheck1:
+    build: ./GostSSLCheck
+    restart: unless-stopped
+    environment:
+      - GOST_CHECK_TIMEOUT=30
+  gostsslcheck2:
+    build: ./GostSSLCheck
+    restart: unless-stopped
+    environment:
+      - GOST_CHECK_TIMEOUT=30
+  gostsslcheck3:
+    build: ./GostSSLCheck
+    restart: unless-stopped
+    environment:
+      - GOST_CHECK_TIMEOUT=30
+
+  tgscanner:
+    build: ./tg_domain_scanner_final
+    restart: unless-stopped
+    depends_on:
+      - gostsslcheck1
+      - gostsslcheck2
+      - gostsslcheck3
+    environment:
+      - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
+      - GOST_CHECK_TIMEOUT=30
