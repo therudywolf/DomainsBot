@@ -14,14 +14,19 @@ from functools import wraps
 from typing import Any, Dict, Tuple, Optional
 from collections import OrderedDict
 
-logger = logging.getLogger(__name__)
+try:
+    from config import settings
+    TTL_SECONDS = settings.CACHE_TTL_SECONDS
+except ImportError:
+    TTL_SECONDS = 3600  # Fallback при импорте до загрузки config (например, в тестах)
 
-TTL_SECONDS = 3600  # 1 час по умолчанию
+logger = logging.getLogger(__name__)
 MAXSIZE = 20000
 MAX_RETRIES = 3  # Количество попыток при ошибке
 RETRY_DELAY = 0.1  # Задержка между попытками (секунды)
 
-_DB_PATH = pathlib.Path(__file__).resolve().parent.parent.joinpath("domain_cache.db")
+_DB_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "domain_cache.db"
+_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _LOCK = asyncio.Lock()
 
 # In-memory fallback кэш для случаев, когда shelve недоступен

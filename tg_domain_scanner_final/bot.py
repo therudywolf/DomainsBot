@@ -120,11 +120,15 @@ DEFAULT_MODE = "full"
 
 # ---------- Конфигурация авторизации и доступа ----------
 
-# ID администратора бота (может быть переопределен через переменную окружения)
-ADMIN_ID = int(os.getenv("ADMIN_ID", "6323277521"))
+# ID администратора бота (обязательная переменная окружения)
+_admin_id = os.getenv("ADMIN_ID")
+if not _admin_id:
+    print("Ошибка: ADMIN_ID не задан. Установите переменную окружения ADMIN_ID.", file=sys.stderr)
+    sys.exit(1)
+ADMIN_ID = int(_admin_id)
 
 # URL для запроса доступа (ссылка на администратора)
-REQUEST_ACCESS_URL = os.getenv("REQUEST_ACCESS_URL", "https://t.me/tyoma_platonov")
+REQUEST_ACCESS_URL = os.getenv("REQUEST_ACCESS_URL", "")
 
 # Путь к файлу базы данных доступов
 ACCESS_DB_FILE = Path("data/access_db.json")

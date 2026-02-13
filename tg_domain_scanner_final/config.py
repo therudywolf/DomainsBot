@@ -53,6 +53,9 @@ class Settings:
     MAX_DOMAINS_PER_REQUEST: int = 1000  # Максимальное количество доменов в одном запросе
     MAX_FILE_SIZE_MB: int = 10  # Максимальный размер загружаемого файла в MB
 
+    # Кэширование
+    CACHE_TTL_SECONDS: int = 3600  # Время жизни кэша в секундах (1 час)
+
 
 def _get_env_int(key: str, default: int) -> int:
     """Получает целое число из переменной окружения."""
@@ -104,4 +107,5 @@ settings = Settings(
     STATS_ENABLED=_get_env_bool("STATS_ENABLED", True),
     MAX_DOMAINS_PER_REQUEST=_get_env_int("MAX_DOMAINS_PER_REQUEST", 1000),
     MAX_FILE_SIZE_MB=_get_env_int("MAX_FILE_SIZE_MB", 10),
+    CACHE_TTL_SECONDS=_get_env_int("CACHE_TTL_SECONDS", 3600),
 )

@@ -12,7 +12,8 @@ from contextlib import contextmanager
 from threading import RLock
 from typing import Optional
 
-_DB_PATH = pathlib.Path(__file__).resolve().parent.parent.joinpath("user_prefs.db")
+_DB_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "user_prefs.db"
+_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 _LOCK = RLock()
 
 
