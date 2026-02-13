@@ -78,35 +78,82 @@ echo.
 REM Экспорт образов
 echo [3/6] Экспорт Docker образов...
 
-REM Получаем ID образа gostsslcheck
-for /f "tokens=*" %%i in ('%DOCKER_COMPOSE% images -q gostsslcheck1') do set GOST_IMAGE=%%i
+REM Получаем имя образа gostsslcheck
+REM Docker Compose создает образы с именем проекта-сервис:latest
+echo   - Поиск образа gostsslcheck...
+set GOST_IMAGE=
+for /f "tokens=*" %%i in ('docker images --format "{{.Repository}}:{{.Tag}}" ^| findstr /C:"gostsslcheck"') do (
+    if "!GOST_IMAGE!"=="" set GOST_IMAGE=%%i
+)
+
 if "!GOST_IMAGE!"=="" (
     echo [ERROR] Образ gostsslcheck не найден
+    echo [INFO] Доступные образы:
+    docker images | findstr /C:"gostsslcheck" || echo   (нет образов gostsslcheck)
+    pause
     exit /b 1
 )
 
-echo   - Экспорт образа gostsslcheck...
+echo   - Экспорт образа gostsslcheck (!GOST_IMAGE!)...
 docker save !GOST_IMAGE! -o "%EXPORT_DIR%\images\gostsslcheck.tar"
 if errorlevel 1 (
     echo [ERROR] Ошибка при экспорте gostsslcheck
+    echo [INFO] Образ: !GOST_IMAGE!
+    echo [INFO] Попробуйте экспортировать вручную: docker save !GOST_IMAGE! -o "%EXPORT_DIR%\images\gostsslcheck.tar"
+    pause
     exit /b 1
 )
-echo     [OK] gostsslcheck.tar сохранен
+if exist "%EXPORT_DIR%\images\gostsslcheck.tar" (
+    for %%F in ("%EXPORT_DIR%\images\gostsslcheck.tar") do set GOST_SIZE=%%~zF
+    if !GOST_SIZE! LSS 1000 (
+        echo     [ERROR] Файл gostsslcheck.tar слишком маленький (!GOST_SIZE! байт)
+        pause
+        exit /b 1
+    )
+    echo     [OK] gostsslcheck.tar сохранен (размер: !GOST_SIZE! байт)
+) else (
+    echo     [ERROR] Файл gostsslcheck.tar не создан!
+    pause
+    exit /b 1
+)
 
-REM Получаем ID образа tgscanner
-for /f "tokens=*" %%i in ('%DOCKER_COMPOSE% images -q tgscanner') do set TGSCANNER_IMAGE=%%i
+REM Получаем имя образа tgscanner
+echo   - Поиск образа tgscanner...
+set TGSCANNER_IMAGE=
+for /f "tokens=*" %%i in ('docker images --format "{{.Repository}}:{{.Tag}}" ^| findstr /C:"tgscanner"') do (
+    if "!TGSCANNER_IMAGE!"=="" set TGSCANNER_IMAGE=%%i
+)
+
 if "!TGSCANNER_IMAGE!"=="" (
     echo [ERROR] Образ tgscanner не найден
+    echo [INFO] Доступные образы:
+    docker images | findstr /C:"tgscanner" || echo   (нет образов tgscanner)
+    pause
     exit /b 1
 )
 
-echo   - Экспорт образа tgscanner...
+echo   - Экспорт образа tgscanner (!TGSCANNER_IMAGE!)...
 docker save !TGSCANNER_IMAGE! -o "%EXPORT_DIR%\images\tgscanner.tar"
 if errorlevel 1 (
     echo [ERROR] Ошибка при экспорте tgscanner
+    echo [INFO] Образ: !TGSCANNER_IMAGE!
+    echo [INFO] Попробуйте экспортировать вручную: docker save !TGSCANNER_IMAGE! -o "%EXPORT_DIR%\images\tgscanner.tar"
+    pause
     exit /b 1
 )
-echo     [OK] tgscanner.tar сохранен
+if exist "%EXPORT_DIR%\images\tgscanner.tar" (
+    for %%F in ("%EXPORT_DIR%\images\tgscanner.tar") do set TGSCANNER_SIZE=%%~zF
+    if !TGSCANNER_SIZE! LSS 1000 (
+        echo     [ERROR] Файл tgscanner.tar слишком маленький (!TGSCANNER_SIZE! байт)
+        pause
+        exit /b 1
+    )
+    echo     [OK] tgscanner.tar сохранен (размер: !TGSCANNER_SIZE! байт)
+) else (
+    echo     [ERROR] Файл tgscanner.tar не создан!
+    pause
+    exit /b 1
+)
 
 echo.
 echo [OK] Образы экспортированы
