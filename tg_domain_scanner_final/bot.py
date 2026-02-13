@@ -381,6 +381,22 @@ async def get_id_by_username(bot: Bot, username: str) -> Optional[int]:
         return None
 
 
+_bot_username_cache: Optional[str] = None
+
+
+async def get_bot_username(bot: Bot) -> str:
+    """Возвращает @username бота (кэшируется после первого вызова)."""
+    global _bot_username_cache
+    if _bot_username_cache is None:
+        try:
+            me = await bot.get_me()
+            _bot_username_cache = me.username or "Bot"
+        except Exception as e:
+            logger.warning(f"Не удалось получить username бота: {e}")
+            _bot_username_cache = "Bot"
+    return _bot_username_cache
+
+
 # ---------- FSM для админ команд ----------
 
 class AdminStates(StatesGroup):
@@ -1220,6 +1236,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     
     features_text = "\n".join(f"• {f}" for f in available_features) if available_features else "• Базовый доступ"
     
+    bot_username = await get_bot_username(message.bot)
     help_text = (
         "👋 *Добро пожаловать в Domain Scanner Bot!*\n\n"
         "Я помогаю анализировать домены и получать информацию о:\n"
@@ -1231,7 +1248,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "📥 *Как использовать:*\n"
         "• Просто отправьте домен(ы) текстом\n"
         "• Или используйте кнопки меню ниже\n"
-        "• Или вызовите бота в любом чате через @YourBotName\n\n"
+        f"• Или вызовите бота в любом чате через @{bot_username}\n\n"
         "Используйте кнопки ниже для быстрого доступа к функциям."
     )
 
@@ -1312,6 +1329,7 @@ async def cmd_help(message: types.Message, state: FSMContext):
     # Записываем использование команды
     record_command("help")
     
+    bot_username = await get_bot_username(message.bot)
     help_text = (
         "ℹ️ *Справка по использованию бота*\n\n"
         "🔍 *Проверка доменов:*\n"
@@ -1330,8 +1348,8 @@ async def cmd_help(message: types.Message, state: FSMContext):
         "📋 *История:*\n"
         "• Команда `/history` или кнопка 'История'\n"
         "• Просмотр последних проверенных доменов\n\n"
-        "💡 *Совет:* Используйте inline режим в любом чате:\n"
-        "Напишите `@YourBotName example.com` для быстрой проверки!"
+        f"💡 *Совет:* Используйте inline режим в любом чате:\n"
+        f"Напишите `@{bot_username} example.com` для быстрой проверки!"
     )
     
     await safe_send_text(
