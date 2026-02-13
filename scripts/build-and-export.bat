@@ -50,7 +50,24 @@ if errorlevel 1 (
     set DOCKER_COMPOSE=docker compose
 )
 
-echo [1/6] Сборка Docker образов...
+echo [1/6] Подготовка WireGuard конфига...
+REM Создаем директорию wg/ если её нет
+if not exist "wg" (
+    mkdir wg
+    echo   [INFO] Директория wg/ создана
+)
+
+REM Создаем пустой конфиг если его нет (для успешной сборки образа)
+if not exist "wg\TGBOT.conf" (
+    echo   [WARNING] WireGuard конфиг не найден, создаю пустой файл для сборки образа
+    (
+        echo # WireGuard конфиг будет добавлен при развертывании
+        echo # Создайте правильный конфиг перед использованием
+    ) > wg\TGBOT.conf
+)
+
+echo.
+echo [2/6] Сборка Docker образов...
 echo.
 
 REM Сборка всех образов
@@ -65,7 +82,7 @@ echo [OK] Образы собраны успешно
 echo.
 
 REM Создаем директорию для экспорта
-echo [2/6] Создание директории для экспорта...
+echo [3/6] Создание директории для экспорта...
 if exist "%EXPORT_DIR%" rmdir /s /q "%EXPORT_DIR%"
 mkdir "%EXPORT_DIR%"
 mkdir "%EXPORT_DIR%\images"
@@ -77,7 +94,7 @@ echo [INFO] Директория экспорта: %EXPORT_DIR%
 echo.
 
 REM Экспорт образов
-echo [3/6] Экспорт Docker образов...
+echo [4/6] Экспорт Docker образов...
 
 REM Получаем имя проекта из имени директории
 set PROJECT_NAME=%CD%
@@ -290,7 +307,7 @@ echo [OK] Образы экспортированы
 echo.
 
 REM Копируем файлы проекта
-echo [4/6] Копирование файлов проекта...
+echo [5/6] Копирование файлов проекта...
 echo.
 
 REM Проверяем наличие исходных файлов
@@ -390,21 +407,13 @@ if exist "%EXPORT_DIR%\project\GostSSLCheck\server.py" (
 )
 
 REM Копируем директорию wg/ если она существует (для WireGuard конфига)
+REM Теперь конфиг встроен в образ, но копируем его для справки/резервной копии
 if exist "wg" (
     echo   - Копирование директории wg/...
     if not exist "%EXPORT_DIR%\project\wg" mkdir "%EXPORT_DIR%\project\wg"
-    REM Копируем все файлы кроме конфига (он должен быть создан вручную на целевой системе)
-    if exist "wg\TGBOT.conf" (
-        echo     [WARNING] TGBOT.conf найден, но не будет скопирован (безопасность)
-        echo     [WARNING] Создайте конфиг WireGuard вручную на целевой системе в wg\TGBOT.conf
-    )
-    REM Копируем другие файлы из wg/ если есть (исключая TGBOT.conf)
-    for %%f in (wg\*) do (
-        if /i not "%%~nxf"=="TGBOT.conf" (
-            copy "%%f" "%EXPORT_DIR%\project\wg\" >nul 2>&1
-        )
-    )
-    echo     [OK] Директория wg/ скопирована (без конфига)
+    REM Копируем все файлы включая конфиг (он уже в образе, но может понадобиться для обновления)
+    xcopy /E /I /Y "wg\*" "%EXPORT_DIR%\project\wg\" >nul 2>&1
+    echo     [OK] Директория wg/ скопирована (конфиг уже встроен в образ)
 )
 
 echo   - Копирование deploy.sh...
@@ -587,7 +596,7 @@ echo ПОДДЕРЖКА:
 echo См. DEPLOYMENT_OFFLINE.md для подробных инструкций.
 ) > "%EXPORT_DIR%\project\README_DEPLOYMENT.txt"
 
-echo [5/6] Создание архива...
+echo [6/6] Создание архива...
 echo.
 echo [INFO] На Windows рекомендуется использовать 7-Zip или WinRAR для создания tar.gz
 echo [INFO] Или использовать WSL для создания архива:

@@ -45,7 +45,9 @@ services:
       start_period: 10s
 
   tgscanner:
-    build: .
+    build:
+      context: ..
+      dockerfile: tg_domain_scanner_final/Dockerfile
     container_name: tgscanner
     restart: unless-stopped
     depends_on:
@@ -60,8 +62,9 @@ services:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
     volumes:
       - ./data:/app/data
-      # WireGuard: монтируем wg/ для конфига и /dev/net/tun для создания интерфейсов
-      - ../wg:/app/wg:ro
+      # WireGuard: конфиг теперь встроен в образ, монтируем только /dev/net/tun для создания интерфейсов
+      # Если нужно переопределить конфиг, можно раскомментировать следующую строку:
+      # - ../wg:/app/wg:ro
       - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN  # Необходимо для создания сетевых интерфейсов (WireGuard)
