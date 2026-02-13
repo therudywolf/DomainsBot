@@ -61,21 +61,37 @@ PROJECT_NAME=$(basename "$PROJECT_ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^
 
 # Экспортируем образы
 echo "  - Экспорт образа gostsslcheck..."
-GOST_IMAGE="$($DOCKER_COMPOSE images -q gostsslcheck1 | head -1)"
+# Используем docker images для получения имени образа, а не SHA256
+GOST_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" bottgdomains-gostsslcheck* | head -1)
 if [ -z "$GOST_IMAGE" ]; then
     echo "❌ Ошибка: Образ gostsslcheck не найден"
+    echo "   Доступные образы:"
+    docker images | grep gostsslcheck || echo "   (нет образов gostsslcheck)"
     exit 1
 fi
+echo "   Найден образ: $GOST_IMAGE"
 docker save "$GOST_IMAGE" -o "$EXPORT_DIR/images/gostsslcheck.tar"
+if [ ! -f "$EXPORT_DIR/images/gostsslcheck.tar" ]; then
+    echo "❌ Ошибка: Не удалось создать gostsslcheck.tar"
+    exit 1
+fi
 echo "    ✅ gostsslcheck.tar сохранен"
 
 echo "  - Экспорт образа tgscanner..."
-TGSCANNER_IMAGE="$($DOCKER_COMPOSE images -q tgscanner | head -1)"
+# Используем docker images для получения имени образа, а не SHA256
+TGSCANNER_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" bottgdomains-tgscanner* | head -1)
 if [ -z "$TGSCANNER_IMAGE" ]; then
     echo "❌ Ошибка: Образ tgscanner не найден"
+    echo "   Доступные образы:"
+    docker images | grep tgscanner || echo "   (нет образов tgscanner)"
     exit 1
 fi
+echo "   Найден образ: $TGSCANNER_IMAGE"
 docker save "$TGSCANNER_IMAGE" -o "$EXPORT_DIR/images/tgscanner.tar"
+if [ ! -f "$EXPORT_DIR/images/tgscanner.tar" ]; then
+    echo "❌ Ошибка: Не удалось создать tgscanner.tar"
+    exit 1
+fi
 echo "    ✅ tgscanner.tar сохранен"
 
 # Проверяем размеры файлов

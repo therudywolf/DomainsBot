@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
 REM Скрипт сборки и экспорта Docker образов для offline развертывания (Windows)
@@ -84,8 +85,13 @@ echo   - Поиск образа gostsslcheck...
 set GOST_IMAGE=
 REM Используем docker images с фильтром и берем первый результат
 REM Создаем временный файл для надежного парсинга
-docker images bottgdomains-gostsslcheck* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\gost_images.txt" 2>nul
+echo [DEBUG] Выполняем: docker images bottgdomains-gostsslcheck* --format "{{.Repository}}:{{.Tag}}"
+docker images bottgdomains-gostsslcheck* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\gost_images.txt" 2>&1
 if exist "%TEMP%\gost_images.txt" (
+    echo [DEBUG] Временный файл создан, размер:
+    for %%F in ("%TEMP%\gost_images.txt") do echo   %%F - %%~zF байт
+    echo [DEBUG] Содержимое файла:
+    type "%TEMP%\gost_images.txt"
     for /f "usebackq tokens=*" %%i in ("%TEMP%\gost_images.txt") do (
         if "!GOST_IMAGE!"=="" (
             set GOST_IMAGE=%%i
@@ -94,6 +100,18 @@ if exist "%TEMP%\gost_images.txt" (
         )
     )
     del "%TEMP%\gost_images.txt" >nul 2>&1
+) else (
+    echo [WARNING] Временный файл не создан, пробуем альтернативный способ...
+    REM Альтернативный способ - через docker images без форматирования
+    for /f "tokens=1,2" %%a in ('docker images bottgdomains-gostsslcheck* 2^>nul ^| findstr /V "REPOSITORY" ^| findstr /V "IMAGE"') do (
+        if "!GOST_IMAGE!"=="" (
+            if not "%%a"=="" (
+                set GOST_IMAGE=%%a:%%b
+                echo     [INFO] Найден образ (альтернативный способ): !GOST_IMAGE!
+                goto :found_gost
+            )
+        )
+    )
 )
 :found_gost
 
@@ -133,8 +151,13 @@ echo   - Поиск образа tgscanner...
 set TGSCANNER_IMAGE=
 REM Используем docker images с фильтром и берем первый результат
 REM Создаем временный файл для надежного парсинга
-docker images bottgdomains-tgscanner* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\tgscanner_images.txt" 2>nul
+echo [DEBUG] Выполняем: docker images bottgdomains-tgscanner* --format "{{.Repository}}:{{.Tag}}"
+docker images bottgdomains-tgscanner* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\tgscanner_images.txt" 2>&1
 if exist "%TEMP%\tgscanner_images.txt" (
+    echo [DEBUG] Временный файл создан, размер:
+    for %%F in ("%TEMP%\tgscanner_images.txt") do echo   %%F - %%~zF байт
+    echo [DEBUG] Содержимое файла:
+    type "%TEMP%\tgscanner_images.txt"
     for /f "usebackq tokens=*" %%i in ("%TEMP%\tgscanner_images.txt") do (
         if "!TGSCANNER_IMAGE!"=="" (
             set TGSCANNER_IMAGE=%%i
@@ -143,6 +166,18 @@ if exist "%TEMP%\tgscanner_images.txt" (
         )
     )
     del "%TEMP%\tgscanner_images.txt" >nul 2>&1
+) else (
+    echo [WARNING] Временный файл не создан, пробуем альтернативный способ...
+    REM Альтернативный способ - через docker images без форматирования
+    for /f "tokens=1,2" %%a in ('docker images bottgdomains-tgscanner* 2^>nul ^| findstr /V "REPOSITORY" ^| findstr /V "IMAGE"') do (
+        if "!TGSCANNER_IMAGE!"=="" (
+            if not "%%a"=="" (
+                set TGSCANNER_IMAGE=%%a:%%b
+                echo     [INFO] Найден образ (альтернативный способ): !TGSCANNER_IMAGE!
+                goto :found_tgscanner
+            )
+        )
+    )
 )
 :found_tgscanner
 
@@ -214,13 +249,19 @@ if errorlevel 1 (
 echo     [OK] docker-compose.yml скопирован
 
 echo   - Копирование tg_domain_scanner_final...
-xcopy /E /I /Y /H /Q tg_domain_scanner_final "%EXPORT_DIR%\project\tg_domain_scanner_final\"
+echo [DEBUG] Исходная директория: %CD%\tg_domain_scanner_final
+echo [DEBUG] Целевая директория: %EXPORT_DIR%\project\tg_domain_scanner_final
+xcopy /E /I /Y /H tg_domain_scanner_final "%EXPORT_DIR%\project\tg_domain_scanner_final\"
 if errorlevel 1 (
-    echo [ERROR] Ошибка при копировании tg_domain_scanner_final
-    echo [INFO] Попытка альтернативного копирования...
+    echo [ERROR] Ошибка при копировании tg_domain_scanner_final (код ошибки: %ERRORLEVEL%)
+    echo [INFO] Попытка альтернативного копирования через robocopy...
     robocopy tg_domain_scanner_final "%EXPORT_DIR%\project\tg_domain_scanner_final" /E /NFL /NDL /NJH /NJS
     if errorlevel 8 (
-        echo [ERROR] Не удалось скопировать tg_domain_scanner_final
+        echo [ERROR] Не удалось скопировать tg_domain_scanner_final (robocopy код: %ERRORLEVEL%)
+        echo [DEBUG] Проверка существования исходной директории:
+        dir tg_domain_scanner_final 2>&1
+        echo [DEBUG] Проверка существования целевой директории:
+        dir "%EXPORT_DIR%\project\" 2>&1
         pause
         exit /b 1
     )
@@ -228,18 +269,30 @@ if errorlevel 1 (
 REM Проверяем что файлы скопировались
 if exist "%EXPORT_DIR%\project\tg_domain_scanner_final\bot.py" (
     echo     [OK] tg_domain_scanner_final скопирован (проверен bot.py)
+    echo [DEBUG] Проверка количества скопированных файлов:
+    dir /s /b "%EXPORT_DIR%\project\tg_domain_scanner_final\*.py" | find /c ".py"
 ) else (
-    echo     [WARNING] bot.py не найден в скопированной директории
+    echo     [ERROR] bot.py не найден в скопированной директории!
+    echo [DEBUG] Содержимое целевой директории:
+    dir "%EXPORT_DIR%\project\tg_domain_scanner_final\" 2>&1
+    pause
+    exit /b 1
 )
 
 echo   - Копирование GostSSLCheck...
-xcopy /E /I /Y /H /Q GostSSLCheck "%EXPORT_DIR%\project\GostSSLCheck\"
+echo [DEBUG] Исходная директория: %CD%\GostSSLCheck
+echo [DEBUG] Целевая директория: %EXPORT_DIR%\project\GostSSLCheck
+xcopy /E /I /Y /H GostSSLCheck "%EXPORT_DIR%\project\GostSSLCheck\"
 if errorlevel 1 (
-    echo [ERROR] Ошибка при копировании GostSSLCheck
-    echo [INFO] Попытка альтернативного копирования...
+    echo [ERROR] Ошибка при копировании GostSSLCheck (код ошибки: %ERRORLEVEL%)
+    echo [INFO] Попытка альтернативного копирования через robocopy...
     robocopy GostSSLCheck "%EXPORT_DIR%\project\GostSSLCheck" /E /NFL /NDL /NJH /NJS
     if errorlevel 8 (
-        echo [ERROR] Не удалось скопировать GostSSLCheck
+        echo [ERROR] Не удалось скопировать GostSSLCheck (robocopy код: %ERRORLEVEL%)
+        echo [DEBUG] Проверка существования исходной директории:
+        dir GostSSLCheck 2>&1
+        echo [DEBUG] Проверка существования целевой директории:
+        dir "%EXPORT_DIR%\project\" 2>&1
         pause
         exit /b 1
     )
@@ -247,8 +300,14 @@ if errorlevel 1 (
 REM Проверяем что файлы скопировались
 if exist "%EXPORT_DIR%\project\GostSSLCheck\server.py" (
     echo     [OK] GostSSLCheck скопирован (проверен server.py)
+    echo [DEBUG] Проверка количества скопированных файлов:
+    dir /s /b "%EXPORT_DIR%\project\GostSSLCheck\*.py" | find /c ".py"
 ) else (
-    echo     [WARNING] server.py не найден в скопированной директории
+    echo     [ERROR] server.py не найден в скопированной директории!
+    echo [DEBUG] Содержимое целевой директории:
+    dir "%EXPORT_DIR%\project\GostSSLCheck\" 2>&1
+    pause
+    exit /b 1
 )
 
 echo   - Копирование deploy.sh...
