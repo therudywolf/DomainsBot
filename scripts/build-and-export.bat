@@ -82,9 +82,20 @@ REM Получаем имя образа gostsslcheck
 REM Docker Compose создает образы с именем проекта-сервис:latest
 echo   - Поиск образа gostsslcheck...
 set GOST_IMAGE=
-for /f "tokens=*" %%i in ('docker images --format "{{.Repository}}:{{.Tag}}" ^| findstr /C:"gostsslcheck"') do (
-    if "!GOST_IMAGE!"=="" set GOST_IMAGE=%%i
+REM Используем docker images с фильтром и берем первый результат
+REM Создаем временный файл для надежного парсинга
+docker images bottgdomains-gostsslcheck* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\gost_images.txt" 2>nul
+if exist "%TEMP%\gost_images.txt" (
+    for /f "usebackq tokens=*" %%i in ("%TEMP%\gost_images.txt") do (
+        if "!GOST_IMAGE!"=="" (
+            set GOST_IMAGE=%%i
+            echo     [INFO] Найден образ: !GOST_IMAGE!
+            goto :found_gost
+        )
+    )
+    del "%TEMP%\gost_images.txt" >nul 2>&1
 )
+:found_gost
 
 if "!GOST_IMAGE!"=="" (
     echo [ERROR] Образ gostsslcheck не найден
@@ -120,9 +131,20 @@ if exist "%EXPORT_DIR%\images\gostsslcheck.tar" (
 REM Получаем имя образа tgscanner
 echo   - Поиск образа tgscanner...
 set TGSCANNER_IMAGE=
-for /f "tokens=*" %%i in ('docker images --format "{{.Repository}}:{{.Tag}}" ^| findstr /C:"tgscanner"') do (
-    if "!TGSCANNER_IMAGE!"=="" set TGSCANNER_IMAGE=%%i
+REM Используем docker images с фильтром и берем первый результат
+REM Создаем временный файл для надежного парсинга
+docker images bottgdomains-tgscanner* --format "{{.Repository}}:{{.Tag}}" > "%TEMP%\tgscanner_images.txt" 2>nul
+if exist "%TEMP%\tgscanner_images.txt" (
+    for /f "usebackq tokens=*" %%i in ("%TEMP%\tgscanner_images.txt") do (
+        if "!TGSCANNER_IMAGE!"=="" (
+            set TGSCANNER_IMAGE=%%i
+            echo     [INFO] Найден образ: !TGSCANNER_IMAGE!
+            goto :found_tgscanner
+        )
+    )
+    del "%TEMP%\tgscanner_images.txt" >nul 2>&1
 )
+:found_tgscanner
 
 if "!TGSCANNER_IMAGE!"=="" (
     echo [ERROR] Образ tgscanner не найден
