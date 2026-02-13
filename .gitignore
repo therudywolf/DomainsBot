@@ -5,6 +5,7 @@ bottgdomains-offline-*.tar
 bottgdomains-offline-*.sha256
 *.tar.gz
 *.tar
+*.zip
 
 # Python
 __pycache__/
