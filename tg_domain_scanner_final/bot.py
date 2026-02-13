@@ -687,6 +687,12 @@ def build_admin_keyboard() -> types.InlineKeyboardMarkup:
             ],
             [
                 types.InlineKeyboardButton(
+                    text="⚡ Массовое редактирование прав",
+                    callback_data="admin_mass_edit_permissions",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
                     text="📤 Экспорт пользователей",
                     callback_data="admin_export_users",
                 ),
@@ -1420,13 +1426,27 @@ async def cmd_stats(message: types.Message):
     text += f"\n🔄 Последний сброс: {stats['last_reset']}"
     
     try:
-        # Проверяем, что bot не None
-        if message.bot is None:
-            logger.warning("message.bot is None in cmd_stats, используем прямой вызов")
-            await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+        # Получаем bot instance из message или создаем через Bot
+        bot = message.bot
+        if bot is None:
+            # Если bot не доступен через message, создаем новый экземпляр
+            logger.warning("message.bot is None in cmd_stats, создаем новый bot instance")
+            bot = Bot(
+                settings.TG_TOKEN,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+            )
+            try:
+                await safe_send_text(
+                    bot,
+                    message.chat.id,
+                    text,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            finally:
+                await bot.session.close()
         else:
             await safe_send_text(
-                message.bot,
+                bot,
                 message.chat.id,
                 text,
                 parse_mode=ParseMode.MARKDOWN
@@ -1438,7 +1458,7 @@ async def cmd_stats(message: types.Message):
             f"error={type(e).__name__}: {str(e)}",
             exc_info=True
         )
-        # Пытаемся отправить через прямой вызов
+        # Пытаемся отправить через прямой вызов message.answer
         try:
             await message.answer(
                 "❌ Ошибка при загрузке статистики. Попробуйте позже.",
@@ -3832,6 +3852,221 @@ async def toggle_permission(callback: types.CallbackQuery):
         await callback.answer("❌ Ошибка при изменении разрешения", show_alert=True)
 
 
+@router.callback_query(F.data == "admin_mass_edit_permissions")
+async def admin_mass_edit_permissions(callback: types.CallbackQuery):
+    """Показывает меню для массового редактирования прав всех пользователей."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    if not callback.message:
+        await callback.answer("❌ Ошибка: сообщение недоступно", show_alert=True)
+        return
+    
+    await callback.answer("⏳ Загрузка...")
+    
+    db = get_access_list()
+    if not db:
+        await callback.message.answer("❌ Нет пользователей в базе.")
+        return
+    
+    # Формируем клавиатуру с кнопками для каждого разрешения
+    keyboard_buttons = []
+    for perm_key, perm_name in PERMISSIONS.items():
+        # Две кнопки в ряд: добавить всем и убрать у всех
+        keyboard_buttons.append([
+            types.InlineKeyboardButton(
+                text=f"➕ {perm_name} (всем)",
+                callback_data=f"mass_perm_add_{perm_key}",
+            ),
+            types.InlineKeyboardButton(
+                text=f"➖ {perm_name} (у всех)",
+                callback_data=f"mass_perm_remove_{perm_key}",
+            ),
+        ])
+    
+    keyboard_buttons.append([
+        types.InlineKeyboardButton(
+            text="🔙 Назад",
+            callback_data="admin_back",
+        )
+    ])
+    
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    user_count = len([uid for uid in db.keys() if str(uid).isdigit()])
+    
+    text_msg = (
+        f"⚡ <b>Массовое редактирование прав</b>\n\n"
+        f"Пользователей в базе: {user_count}\n\n"
+        f"Выберите действие для каждого разрешения:"
+    )
+    
+    try:
+        await callback.message.edit_text(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Ошибка при редактировании сообщения: {e}")
+        await callback.message.answer(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("mass_perm_add_"))
+async def mass_perm_add(callback: types.CallbackQuery):
+    """Добавляет разрешение всем пользователям."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    # Парсим данные: mass_perm_add_{permission}
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer("❌ Ошибка формата", show_alert=True)
+        return
+    
+    permission = parts[3]
+    if permission not in PERMISSIONS:
+        await callback.answer("❌ Неизвестное разрешение", show_alert=True)
+        return
+    
+    await callback.answer("⏳ Обработка...")
+    
+    db = get_access_list()
+    if not db:
+        await callback.answer("❌ Нет пользователей в базе", show_alert=True)
+        return
+    
+    # Добавляем разрешение всем пользователям (кроме админа)
+    updated_count = 0
+    for user_id_str in db.keys():
+        if not str(user_id_str).isdigit():
+            continue
+        user_id = int(user_id_str)
+        if user_id == ADMIN_ID:
+            continue  # Админ всегда имеет все разрешения
+        
+        if set_user_permission(user_id, permission, True):
+            updated_count += 1
+    
+    perm_name = PERMISSIONS[permission]
+    await callback.answer(
+        f"✅ Разрешение '{perm_name}' добавлено {updated_count} пользователям",
+        show_alert=True
+    )
+    
+    # Обновляем меню напрямую
+    if callback.message:
+        db = get_access_list()
+        keyboard_buttons = []
+        for perm_key, perm_name_item in PERMISSIONS.items():
+            keyboard_buttons.append([
+                types.InlineKeyboardButton(
+                    text=f"➕ {perm_name_item} (всем)",
+                    callback_data=f"mass_perm_add_{perm_key}",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"➖ {perm_name_item} (у всех)",
+                    callback_data=f"mass_perm_remove_{perm_key}",
+                ),
+            ])
+        
+        keyboard_buttons.append([
+            types.InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data="admin_back",
+            )
+        ])
+        
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        user_count = len([uid for uid in db.keys() if str(uid).isdigit()])
+        text_msg = (
+            f"⚡ <b>Массовое редактирование прав</b>\n\n"
+            f"Пользователей в базе: {user_count}\n\n"
+            f"Выберите действие для каждого разрешения:"
+        )
+        try:
+            await callback.message.edit_text(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data.startswith("mass_perm_remove_"))
+async def mass_perm_remove(callback: types.CallbackQuery):
+    """Убирает разрешение у всех пользователей."""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только администратор", show_alert=True)
+        return
+    
+    # Парсим данные: mass_perm_remove_{permission}
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer("❌ Ошибка формата", show_alert=True)
+        return
+    
+    permission = parts[3]
+    if permission not in PERMISSIONS:
+        await callback.answer("❌ Неизвестное разрешение", show_alert=True)
+        return
+    
+    await callback.answer("⏳ Обработка...")
+    
+    db = get_access_list()
+    if not db:
+        await callback.answer("❌ Нет пользователей в базе", show_alert=True)
+        return
+    
+    # Убираем разрешение у всех пользователей (кроме админа)
+    updated_count = 0
+    for user_id_str in db.keys():
+        if not str(user_id_str).isdigit():
+            continue
+        user_id = int(user_id_str)
+        if user_id == ADMIN_ID:
+            continue  # Админ всегда имеет все разрешения
+        
+        if set_user_permission(user_id, permission, False):
+            updated_count += 1
+    
+    perm_name = PERMISSIONS[permission]
+    await callback.answer(
+        f"✅ Разрешение '{perm_name}' убрано у {updated_count} пользователей",
+        show_alert=True
+    )
+    
+    # Обновляем меню напрямую
+    if callback.message:
+        db = get_access_list()
+        keyboard_buttons = []
+        for perm_key, perm_name_item in PERMISSIONS.items():
+            keyboard_buttons.append([
+                types.InlineKeyboardButton(
+                    text=f"➕ {perm_name_item} (всем)",
+                    callback_data=f"mass_perm_add_{perm_key}",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"➖ {perm_name_item} (у всех)",
+                    callback_data=f"mass_perm_remove_{perm_key}",
+                ),
+            ])
+        
+        keyboard_buttons.append([
+            types.InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data="admin_back",
+            )
+        ])
+        
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        user_count = len([uid for uid in db.keys() if str(uid).isdigit()])
+        text_msg = (
+            f"⚡ <b>Массовое редактирование прав</b>\n\n"
+            f"Пользователей в базе: {user_count}\n\n"
+            f"Выберите действие для каждого разрешения:"
+        )
+        try:
+            await callback.message.edit_text(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        except Exception:
+            pass
+
+
 @router.callback_query(F.data == "admin_export_users")
 async def admin_export_users(callback: types.CallbackQuery):
     """Экспортирует список пользователей в формате JSON для удобного переноса."""
@@ -3956,69 +4191,72 @@ async def admin_stats_callback(callback: types.CallbackQuery):
             await callback.answer("❌ Только администратор", show_alert=True)
             return
         
-        # Получаем bot из callback.message.bot или callback.bot
-        bot = callback.message.bot if callback.message else callback.bot
-        if bot is None:
-            # Если bot все еще None, пытаемся получить из data
-            logger.error("Bot is None in admin_stats_callback, используем прямой вызов")
-            # Используем прямой вызов вместо fake_message
-            await callback.answer("⏳ Загрузка статистики...")
-            stats = get_stats()
-            
-            # Формируем сообщение
-            text = (
-                "📊 *Статистика бота*\n\n"
-                f"⏱️ *Время работы:*\n"
-                f"• Дней: {stats['uptime_days']}\n"
-                f"• Часов: {stats['uptime_hours']}\n"
-                f"• Секунд: {stats['uptime_seconds']}\n\n"
-                f"📈 *Использование:*\n"
-                f"• Проверено доменов: {stats['total_domains_checked']}\n"
-                f"• Уникальных пользователей: {stats['total_users']}\n\n"
-            )
-            
-            # Топ доменов
-            if stats['top_domains']:
-                text += "🔝 *Топ доменов:*\n"
-                for domain, count in list(stats['top_domains'].items())[:5]:
-                    text += f"• {domain}: {count}\n"
-                text += "\n"
-            
-            # Топ команд
-            if stats['top_commands']:
-                text += "⚙️ *Топ команд:*\n"
-                for cmd, count in list(stats['top_commands'].items())[:5]:
-                    text += f"• {cmd}: {count}\n"
-                text += "\n"
-            
-            # Топ ошибок
-            if stats['top_errors']:
-                text += "⚠️ *Топ ошибок:*\n"
-                for error, count in list(stats['top_errors'].items())[:5]:
-                    text += f"• {error}: {count}\n"
-            
-            text += f"\n🔄 Последний сброс: {stats['last_reset']}"
-            
-            # Отправляем напрямую через callback.message
-            if callback.message:
-                await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
-            await callback.answer()
-            return
+        await callback.answer("⏳ Загрузка статистики...")
         
-        # Используем существующую команду stats
-        from aiogram.types import Message
-        # Создаем fake_message с правильным bot
-        fake_message = Message(
-            message_id=callback.message.message_id if callback.message else 0,
-            date=callback.message.date if callback.message else datetime.now(),
-            chat=callback.message.chat if callback.message else callback.from_user,
-            from_user=callback.from_user,
-            content_type="text",
-            text="/stats",
-            bot=bot,
+        # Получаем bot из callback.message.bot или callback.bot
+        bot = None
+        if callback.message:
+            bot = callback.message.bot
+        if bot is None:
+            bot = callback.bot
+        if bot is None:
+            # Если bot все еще None, создаем новый экземпляр
+            logger.warning("Bot is None in admin_stats_callback, создаем новый bot instance")
+            bot = Bot(
+                settings.TG_TOKEN,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+            )
+        
+        stats = get_stats()
+        
+        # Формируем сообщение
+        text = (
+            "📊 *Статистика бота*\n\n"
+            f"⏱️ *Время работы:*\n"
+            f"• Дней: {stats['uptime_days']}\n"
+            f"• Часов: {stats['uptime_hours']}\n"
+            f"• Секунд: {stats['uptime_seconds']}\n\n"
+            f"📈 *Использование:*\n"
+            f"• Проверено доменов: {stats['total_domains_checked']}\n"
+            f"• Уникальных пользователей: {stats['total_users']}\n\n"
         )
-        await cmd_stats(fake_message)
-        await callback.answer()
+        
+        # Топ доменов
+        if stats['top_domains']:
+            text += "🔝 *Топ доменов:*\n"
+            for domain, count in list(stats['top_domains'].items())[:5]:
+                text += f"• {domain}: {count}\n"
+            text += "\n"
+        
+        # Топ команд
+        if stats['top_commands']:
+            text += "⚙️ *Топ команд:*\n"
+            for cmd, count in list(stats['top_commands'].items())[:5]:
+                text += f"• {cmd}: {count}\n"
+            text += "\n"
+        
+        # Топ ошибок
+        if stats['top_errors']:
+            text += "⚠️ *Топ ошибок:*\n"
+            for error, count in list(stats['top_errors'].items())[:5]:
+                text += f"• {error}: {count}\n"
+        
+        text += f"\n🔄 Последний сброс: {stats['last_reset']}"
+        
+        # Отправляем сообщение
+        chat_id = callback.message.chat.id if callback.message else callback.from_user.id
+        try:
+            await safe_send_text(
+                bot,
+                chat_id,
+                text,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        finally:
+            # Закрываем сессию только если мы создали новый bot
+            if bot != callback.message.bot if callback.message else callback.bot:
+                await bot.session.close()
+        
     except Exception as e:
         logger.error(
             f"❌ Ошибка в admin_stats_callback | "

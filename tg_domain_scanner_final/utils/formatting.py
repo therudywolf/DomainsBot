@@ -279,6 +279,7 @@ def build_report(
     gost_not_before = ssl.get('GostNotBefore')
     gost_not_after = ssl.get('GostNotAfter')
     gost_enabled = ssl.get('gost', False)
+    gost_check_failed = ssl.get('GostCheckFailed', False)  # Флаг: не удалось проверить через endpoints
     
     if gost_not_before and gost_not_after:
         # Оба значения есть
@@ -295,8 +296,11 @@ def build_report(
     elif gost_enabled:
         # GOST обнаружен, но даты не получены
         lines.append("   <b>GOST сертификат:</b> ✅ (обнаружен, даты не получены)")
+    elif gost_check_failed:
+        # Не удалось проверить через endpoints
+        lines.append("   <b>GOST сертификат:</b> ⚠️ (не удалось проверить)")
     else:
-        # GOST не обнаружен
+        # GOST не обнаружен (проверка прошла успешно, но GOST не найден)
         lines.append("   <b>GOST сертификат:</b> ❌ (не обнаружен)")
     
     lines.append("")
@@ -320,7 +324,12 @@ def build_report(
     lines.append(f"   <b>WAF:</b> {waf_status}")
     
     # GOST
-    gost_status = "✅ Обнаружен" if gost_enabled else "❌ Не обнаружен"
+    if gost_enabled:
+        gost_status = "✅ Обнаружен"
+    elif gost_check_failed:
+        gost_status = "⚠️ Не удалось проверить"
+    else:
+        gost_status = "❌ Не обнаружен"
     lines.append(f"   <b>GOST сертификат:</b> {gost_status}")
     
     return "\n".join(lines)

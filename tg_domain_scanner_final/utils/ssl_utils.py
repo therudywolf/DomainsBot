@@ -291,6 +291,8 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
     """
     # Шаг 1: Проверка через удаленный сервис
     is_gost_remote = await _remote_is_gost(domain)
+    # Флаг, показывающий, что удаленная проверка не удалась (все endpoints недоступны)
+    gost_check_failed = (is_gost_remote is None)
     
     # Шаг 2: Локальная проверка TLS соединения
     ctx = ssl.create_default_context()
@@ -304,8 +306,9 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
         "GostNotAfter": None,
         "SigAlg": None,
         "Cipher": None,
-        "IsGOST": is_gost_remote,
-        "gost": is_gost_remote,
+        "IsGOST": is_gost_remote if is_gost_remote is not None else False,
+        "gost": is_gost_remote if is_gost_remote is not None else False,
+        "GostCheckFailed": gost_check_failed,  # Флаг: True если не удалось проверить через endpoints
     }
     
     try:
@@ -358,8 +361,13 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
         if is_gost_remote is None:
             # Если удаленная проверка не сработала, используем локальную эвристику
             is_gost = _cert_is_gost(cert) or (negotiated_cipher and _cipher_is_gost(negotiated_cipher))
+            # Если локальная проверка тоже не дала результата, оставляем флаг gost_check_failed
+            if not is_gost:
+                cert_info["GostCheckFailed"] = True
         else:
             is_gost = is_gost_remote
+            # Если удаленная проверка прошла успешно, сбрасываем флаг
+            cert_info["GostCheckFailed"] = False
         
         cert_info["IsGOST"] = is_gost
         cert_info["gost"] = is_gost
