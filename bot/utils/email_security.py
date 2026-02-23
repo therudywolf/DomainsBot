@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 
 import dns.asyncresolver
 import dns.exception
+import dns.resolver
 
 from utils.cache import ttl_cache
 
@@ -21,8 +22,8 @@ async def _query_txt(name: str, timeout: float) -> list[str]:
             b"".join(rdata.strings).decode("utf-8", errors="replace")
             for rdata in answers
         ]
-    except (dns.asyncresolver.NXDOMAIN, dns.asyncresolver.NoAnswer,
-            dns.asyncresolver.NoNameservers, dns.exception.Timeout) as exc:
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer,
+            dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
         logger.debug("TXT lookup failed for %s: %s", name, exc)
         return []
     except Exception as exc:
