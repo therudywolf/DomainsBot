@@ -15,7 +15,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any, Set, Literal
 
 from aiogram import Bot
 
@@ -52,12 +52,18 @@ async def _save_monitoring_db(data: Dict[str, Any]) -> None:
     await async_write_json(MONITORING_DB_PATH, data)
 
 
-async def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
-    """Добавляет домен в мониторинг для пользователя.
+def _owner_key(user_id: int, scope: Literal["user", "global"]) -> str:
+    """Возвращает ключ владельца панели в БД."""
+    return "global" if scope == "global" else str(user_id)
+
+
+async def add_domain_to_monitoring(user_id: int, domain: str, scope: Literal["user", "global"] = "user") -> bool:
+    """Добавляет домен в мониторинг для пользователя или общей панели.
     
     Args:
-        user_id: ID пользователя
+        user_id: ID пользователя (для scope=user)
         domain: Домен для мониторинга
+        scope: "user" — личная панель, "global" — общая панель
         
     Returns:
         True если домен добавлен, False если уже был в мониторинге
@@ -65,7 +71,7 @@ async def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
     async with _monitoring_async_lock:
         db = await _load_monitoring_db()
         
-        user_key = str(user_id)
+        user_key = _owner_key(user_id, scope)
         if user_key not in db:
             db[user_key] = {
                 "domains": {},
@@ -81,18 +87,19 @@ async def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
                 "state_history": [],
             }
             await _save_monitoring_db(db)
-            logger.info(f"Домен {domain} добавлен в мониторинг для пользователя {user_id}")
+            logger.info(f"Домен {domain} добавлен в мониторинг ({scope}: {user_key})")
             return True
         
         return False
 
 
-async def remove_domain_from_monitoring(user_id: int, domain: str) -> bool:
-    """Удаляет домен из мониторинга пользователя.
+async def remove_domain_from_monitoring(user_id: int, domain: str, scope: Literal["user", "global"] = "user") -> bool:
+    """Удаляет домен из мониторинга пользователя или общей панели.
     
     Args:
-        user_id: ID пользователя
+        user_id: ID пользователя (для scope=user)
         domain: Домен для удаления
+        scope: "user" или "global"
         
     Returns:
         True если домен был удален, False если его не было
@@ -100,43 +107,39 @@ async def remove_domain_from_monitoring(user_id: int, domain: str) -> bool:
     async with _monitoring_async_lock:
         db = await _load_monitoring_db()
         
-        user_key = str(user_id)
+        user_key = _owner_key(user_id, scope)
         if user_key in db and domain in db[user_key]["domains"]:
             del db[user_key]["domains"][domain]
             await _save_monitoring_db(db)
-            logger.info(f"Домен {domain} удален из мониторинга для пользователя {user_id}")
+            logger.info(f"Домен {domain} удален из мониторинга ({scope}: {user_key})")
             return True
         
         return False
 
 
-async def get_monitored_domains(user_id: int) -> List[str]:
-    """Получает список доменов в мониторинге для пользователя.
+async def get_monitored_domains(user_id: int, scope: Literal["user", "global"] = "user") -> List[str]:
+    """Получает список доменов в мониторинге для пользователя или общей панели.
     
     Args:
-        user_id: ID пользователя
+        user_id: ID пользователя (для scope=user)
+        scope: "user" или "global"
         
     Returns:
         Список доменов
     """
     async with _monitoring_async_lock:
         db = await _load_monitoring_db()
-        user_key = str(user_id)
+        user_key = _owner_key(user_id, scope)
         if user_key in db:
             return list(db[user_key]["domains"].keys())
         return []
 
 
-async def set_monitoring_interval(user_id: int, interval_minutes: int) -> None:
-    """Устанавливает интервал проверки для пользователя.
-    
-    Args:
-        user_id: ID пользователя
-        interval_minutes: Интервал в минутах
-    """
+async def set_monitoring_interval(user_id: int, interval_minutes: int, scope: Literal["user", "global"] = "user") -> None:
+    """Устанавливает интервал проверки для пользователя или общей панели."""
     async with _monitoring_async_lock:
         db = await _load_monitoring_db()
-        user_key = str(user_id)
+        user_key = _owner_key(user_id, scope)
         if user_key not in db:
             db[user_key] = {
                 "domains": {},
@@ -148,33 +151,21 @@ async def set_monitoring_interval(user_id: int, interval_minutes: int) -> None:
         await _save_monitoring_db(db)
 
 
-async def get_monitoring_interval(user_id: int) -> int:
-    """Получает интервал проверки для пользователя.
-    
-    Args:
-        user_id: ID пользователя
-        
-    Returns:
-        Интервал в минутах (по умолчанию 15)
-    """
+async def get_monitoring_interval(user_id: int, scope: Literal["user", "global"] = "user") -> int:
+    """Получает интервал проверки для пользователя или общей панели (по умолчанию 15 мин)."""
     async with _monitoring_async_lock:
         db = await _load_monitoring_db()
-        user_key = str(user_id)
+        user_key = _owner_key(user_id, scope)
         if user_key in db:
             return db[user_key].get("interval_minutes", 15)
         return 15
 
 
-async def set_monitoring_enabled(user_id: int, enabled: bool) -> None:
-    """Включает/выключает мониторинг для пользователя.
-    
-    Args:
-        user_id: ID пользователя
-        enabled: Включен ли мониторинг
-    """
+async def set_monitoring_enabled(user_id: int, enabled: bool, scope: Literal["user", "global"] = "user") -> None:
+    """Включает/выключает мониторинг для пользователя или общей панели."""
     async with _monitoring_async_lock:
         db = await _load_monitoring_db()
-        user_key = str(user_id)
+        user_key = _owner_key(user_id, scope)
         if user_key not in db:
             db[user_key] = {
                 "domains": {},
@@ -186,21 +177,21 @@ async def set_monitoring_enabled(user_id: int, enabled: bool) -> None:
         await _save_monitoring_db(db)
 
 
-async def is_monitoring_enabled(user_id: int) -> bool:
-    """Проверяет, включен ли мониторинг для пользователя.
-    
-    Args:
-        user_id: ID пользователя
-        
-    Returns:
-        True если мониторинг включен
-    """
+async def is_monitoring_enabled(user_id: int, scope: Literal["user", "global"] = "user") -> bool:
+    """Проверяет, включен ли мониторинг для пользователя или общей панели."""
     async with _monitoring_async_lock:
         db = await _load_monitoring_db()
-        user_key = str(user_id)
+        user_key = _owner_key(user_id, scope)
         if user_key in db:
             return db[user_key].get("enabled", True)
         return True
+
+
+async def get_monitoring_owner_keys() -> List[str]:
+    """Возвращает список ключей владельцев в БД мониторинга (для админа: список панелей)."""
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
+        return list(db.keys())
 
 
 async def _get_domain_state(domain: str, user_id: int) -> Dict[str, Any]:
@@ -379,17 +370,19 @@ def _compare_states(old_state: Optional[Dict[str, Any]], new_state: Dict[str, An
     return changes
 
 
-async def _check_domain(bot: Bot, user_id: int, domain: str, notification_chat_id: Optional[int] = None) -> None:
+async def _check_domain(bot: Bot, owner_key: str, domain: str, notification_chat_id: Optional[int] = None) -> None:
     """Проверяет один домен и отправляет уведомления при изменениях.
     
     Args:
         bot: Экземпляр бота для отправки уведомлений
-        user_id: ID пользователя
+        owner_key: Ключ владельца панели в БД (str(user_id) или "global")
         domain: Домен для проверки
+        notification_chat_id: Чат для уведомлений (если None, берётся из настроек)
     """
+    user_id_for_prefs = int(owner_key) if owner_key != "global" else 0
     try:
         # Получаем текущее состояние
-        new_state = await _get_domain_state(domain, user_id)
+        new_state = await _get_domain_state(domain, user_id_for_prefs)
         
         if not new_state:
             logger.warning(f"Не удалось получить состояние для {domain}")
@@ -398,7 +391,7 @@ async def _check_domain(bot: Bot, user_id: int, domain: str, notification_chat_i
         # Загружаем БД и сравниваем с предыдущим состоянием (async-safe)
         async with _monitoring_async_lock:
             db = await _load_monitoring_db()
-            user_key = str(user_id)
+            user_key = owner_key
             
             if user_key not in db or domain not in db[user_key]["domains"]:
                 return
@@ -432,62 +425,123 @@ async def _check_domain(bot: Bot, user_id: int, domain: str, notification_chat_i
             notification_text = f"🔔 Изменение для {domain}:\n" + "\n".join(f"• {c}" for c in changes)
             
             # Определяем чат для отправки уведомления
-            # Если передан notification_chat_id, используем его, иначе получаем из настроек
             target_chat_id = notification_chat_id
             if target_chat_id is None:
                 try:
-                    target_chat_id = get_notification_chat_id(user_id)
+                    if owner_key == "global":
+                        from utils.chat_settings import get_notification_chat_id_global
+                        target_chat_id = get_notification_chat_id_global()
+                    else:
+                        target_chat_id = get_notification_chat_id(int(owner_key))
                 except Exception:
                     target_chat_id = None
             
-            # Если чат не настроен, отправляем в личные сообщения
+            # Если чат не настроен: для пользователя — в ЛС, для global — не отправляем
+            dm_fallback_id = int(owner_key) if owner_key != "global" else None
+            if target_chat_id is None and dm_fallback_id is not None:
+                target_chat_id = dm_fallback_id
+            
             if target_chat_id is None:
-                target_chat_id = user_id
+                logger.debug(f"Нет чата для уведомлений (панель {owner_key}), пропуск отправки")
+                return
             
             try:
                 await bot.send_message(target_chat_id, notification_text)
-                logger.info(f"Отправлено уведомление в чат {target_chat_id} для пользователя {user_id} (домен: {domain})")
+                logger.info(f"Отправлено уведомление в чат {target_chat_id} для панели {owner_key} (домен: {domain})")
             except Exception as e:
                 error_msg = str(e).lower()
-                # Проверяем, является ли ошибка связанной с недоступностью чата
+                # Проверяем, является ли ошибка связанной с недоступностью чата или правами бота
                 is_chat_not_found = (
                     "chat not found" in error_msg or
                     "чат не найден" in error_msg or
                     "chat_id is empty" in error_msg or
                     "bad request: chat not found" in error_msg
                 )
-                
-                if is_chat_not_found and target_chat_id != user_id:
-                    # Чат недоступен - удаляем его из настроек и известных чатов
-                    logger.warning(f"Чат {target_chat_id} недоступен для пользователя {user_id}, удаляем из настроек")
+                is_forbidden_or_no_rights = (
+                    "forbidden" in error_msg or
+                    "bot is not a member" in error_msg or
+                    "not a member of" in error_msg or
+                    "not enough rights" in error_msg or
+                    "have no rights" in error_msg or
+                    "can't send" in error_msg or
+                    "нет прав" in error_msg or
+                    "недоступен" in error_msg
+                )
+                is_chat_unavailable = is_chat_not_found or is_forbidden_or_no_rights
+
+                if is_chat_unavailable and (dm_fallback_id is None or target_chat_id != dm_fallback_id):
+                    logger.warning(f"Чат {target_chat_id} недоступен для панели {owner_key}, удаляем из настроек")
                     try:
-                        from utils.chat_settings import set_notification_chat_id, remove_known_chat
-                        set_notification_chat_id(user_id, None)
-                        remove_known_chat(user_id, target_chat_id)
-                        # Отправляем уведомление пользователю о проблеме
-                        try:
-                            await bot.send_message(
-                                user_id,
-                                f"⚠️ Чат с ID {target_chat_id} недоступен. "
-                                f"Уведомления переключены на личные сообщения.\n\n"
-                                f"Чтобы настроить другой чат, используйте /settings"
-                            )
-                        except Exception:
-                            pass
+                        if owner_key == "global":
+                            from utils.chat_settings import set_notification_chat_id_global
+                            set_notification_chat_id_global(None)
+                        else:
+                            from utils.chat_settings import set_notification_chat_id, remove_known_chat
+                            set_notification_chat_id(int(owner_key), None)
+                            remove_known_chat(int(owner_key), target_chat_id)
+                            try:
+                                await bot.send_message(
+                                    int(owner_key),
+                                    f"⚠️ Чат с ID {target_chat_id} недоступен. "
+                                    f"Уведомления переключены на личные сообщения.\n\n"
+                                    f"Чтобы настроить другой чат, используйте настройки мониторинга."
+                                )
+                            except Exception:
+                                pass
                     except Exception as cleanup_error:
                         logger.error(f"Ошибка при очистке настроек чата: {cleanup_error}")
                 
-                logger.warning(f"Не удалось отправить уведомление в чат {target_chat_id} для пользователя {user_id}: {e}")
-                # Fallback: отправляем в личные сообщения
-                if target_chat_id != user_id:
+                logger.warning(f"Не удалось отправить уведомление в чат {target_chat_id} для панели {owner_key}: {e}")
+                if dm_fallback_id is not None and target_chat_id != dm_fallback_id:
                     try:
-                        await bot.send_message(user_id, notification_text)
-                        logger.info(f"Отправлено уведомление в личные сообщения пользователю {user_id} (домен: {domain})")
+                        await bot.send_message(dm_fallback_id, notification_text)
+                        logger.info(f"Отправлено уведомление в ЛС пользователю {dm_fallback_id} (домен: {domain})")
                     except Exception as e2:
-                        logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e2}")
+                        logger.error(f"Не удалось отправить уведомление пользователю {dm_fallback_id}: {e2}")
     
     except Exception as e:
         logger.error(f"Ошибка при проверке домена {domain}: {e}", exc_info=True)
+
+
+async def run_checks_now(bot: Bot, owner_key: str) -> None:
+    """Запускает проверку всех доменов панели мониторинга без ожидания таймера.
+
+    Args:
+        bot: Экземпляр бота для отправки уведомлений
+        owner_key: Ключ владельца панели — str(user_id) или "global"
+    """
+    semaphore = asyncio.Semaphore(settings.CONCURRENCY)
+
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
+
+    if owner_key not in db:
+        logger.warning(f"run_checks_now: панель {owner_key} не найдена")
+        return
+
+    user_data = db[owner_key]
+    domains = list(user_data.get("domains", {}).keys())
+    if not domains:
+        logger.debug(f"run_checks_now: нет доменов для панели {owner_key}")
+        return
+
+    notification_chat_id = None
+    try:
+        if owner_key == "global":
+            from utils.chat_settings import get_notification_chat_id_global
+            notification_chat_id = get_notification_chat_id_global()
+        else:
+            notification_chat_id = get_notification_chat_id(int(owner_key))
+    except Exception:
+        pass
+
+    async def check_with_semaphore(domain: str, key: str, chat_id: Optional[int]):
+        async with semaphore:
+            await _check_domain(bot, key, domain, notification_chat_id=chat_id)
+
+    tasks = [check_with_semaphore(d, owner_key, notification_chat_id) for d in domains]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info(f"run_checks_now: проверка панели {owner_key} завершена ({len(domains)} доменов)")
 
 
 async def _monitoring_loop(bot: Bot) -> None:
@@ -510,19 +564,28 @@ async def _monitoring_loop(bot: Bot) -> None:
             # Собираем задачи для параллельного выполнения
             tasks = []
             
-            # Проверяем каждого пользователя
-            for user_key, user_data in db.items():
+            # Проверяем каждую панель (пользователь или global)
+            for owner_key, user_data in db.items():
                 if not user_data.get("enabled", True):
                     continue
-                
-                user_id = int(user_key)
+
                 interval_minutes = user_data.get("interval_minutes", 15)
-                
-                # Проверяем каждый домен пользователя
+
+                # Получаем ID чата для уведомлений
+                notification_chat_id = None
+                try:
+                    if owner_key == "global":
+                        from utils.chat_settings import get_notification_chat_id_global
+                        notification_chat_id = get_notification_chat_id_global()
+                    else:
+                        notification_chat_id = get_notification_chat_id(int(owner_key))
+                except (ValueError, Exception):
+                    pass
+
+                # Проверяем каждый домен панели
                 for domain, domain_data in user_data.get("domains", {}).items():
                     last_check = domain_data.get("last_check")
-                    
-                    # Проверяем, нужно ли проверять сейчас
+
                     should_check = True
                     if last_check:
                         try:
@@ -531,21 +594,13 @@ async def _monitoring_loop(bot: Bot) -> None:
                             should_check = datetime.now(last_check_dt.tzinfo) >= next_check
                         except Exception:
                             pass
-                    
+
                     if should_check:
-                        # Получаем ID чата для уведомлений из настроек пользователя
-                        notification_chat_id = None
-                        try:
-                            notification_chat_id = get_notification_chat_id(user_id)
-                        except Exception:
-                            pass
-                        
-                        # Создаем задачу с семафором для контроля параллелизма
-                        async def check_with_semaphore(domain: str, user_id: int, chat_id: Optional[int]):
+                        async def check_with_semaphore(d: str, key: str, chat_id: Optional[int]):
                             async with semaphore:
-                                await _check_domain(bot, user_id, domain, notification_chat_id=chat_id)
-                        
-                        tasks.append(check_with_semaphore(domain, user_id, notification_chat_id))
+                                await _check_domain(bot, key, d, notification_chat_id=chat_id)
+
+                        tasks.append(check_with_semaphore(domain, owner_key, notification_chat_id))
             
             # Выполняем все проверки параллельно
             if tasks:
@@ -595,9 +650,9 @@ async def _cleanup_monitoring_data() -> None:
                     except Exception:
                         pass
             
-            if not has_recent_activity and not domains:
+            if not has_recent_activity and not domains and user_key != "global":
                 users_to_remove.append(user_key)
-        
+
         for user_key in users_to_remove:
             del db[user_key]
             logger.debug(f"Удален неактивный пользователь {user_key} из мониторинга")

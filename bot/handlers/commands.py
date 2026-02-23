@@ -485,5 +485,5 @@ async def cmd_monitor(message: types.Message):
         message.chat.id,
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=build_monitoring_keyboard()
+        reply_markup=build_monitoring_keyboard(user_id)
     )

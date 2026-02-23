@@ -22,10 +22,9 @@ CHAT_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
 # {
 #   "user_id": {
 #     "notification_chat_id": chat_id (int или None),
-#     "known_chats": [
-#       {"chat_id": int, "title": str, "type": str, "added_at": str}
-#     ]
-#   }
+#     "known_chats": [...]
+#   },
+#   "global": {"notification_chat_id": chat_id (int или None)}  # чат для общей панели мониторинга
 # }
 
 
@@ -104,6 +103,26 @@ def get_notification_chat_id(user_id: int) -> Optional[int]:
     
     chat_id = data[user_key].get("notification_chat_id")
     return int(chat_id) if chat_id is not None else None
+
+
+def get_notification_chat_id_global() -> Optional[int]:
+    """Получает ID чата для уведомлений общей панели мониторинга."""
+    data = _load_chat_settings()
+    if "global" not in data:
+        return None
+    chat_id = data["global"].get("notification_chat_id")
+    return int(chat_id) if chat_id is not None else None
+
+
+def set_notification_chat_id_global(chat_id: Optional[int]) -> bool:
+    """Устанавливает ID чата для уведомлений общей панели мониторинга."""
+    data = _load_chat_settings()
+    if "global" not in data:
+        data["global"] = {"notification_chat_id": None}
+    data["global"]["notification_chat_id"] = chat_id
+    _save_chat_settings(data)
+    logger.info(f"Установлен чат уведомлений общей панели: {chat_id}")
+    return True
 
 
 def set_notification_chat_id(user_id: int, chat_id: Optional[int]) -> bool:

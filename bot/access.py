@@ -521,6 +521,7 @@ class MonitoringStates(StatesGroup):
     remove_domain_waiting = State()
     set_interval_waiting = State()
     set_waf_timeout_waiting = State()
+    set_global_chat_waiting = State()
 
 
 class ChatSettingsStates(StatesGroup):
