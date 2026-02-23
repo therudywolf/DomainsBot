@@ -113,6 +113,63 @@ async def safe_callback_answer(
         return False
 
 
+# ---------- Запрос доступа (пользователь без доступа) ----------
+
+@router.callback_query(F.data == "request_access")
+async def request_access_callback(callback: types.CallbackQuery):
+    """Пользователь нажал «Запросить доступ» — отправляем уведомление главному админу."""
+    if not callback.from_user:
+        return
+    user_id = callback.from_user.id
+
+    if has_access(user_id):
+        await safe_callback_answer(callback, "У вас уже есть доступ", show_alert=True)
+        return
+
+    await safe_callback_answer(callback, "Запрос отправлен администратору")
+
+    username = (callback.from_user.username or "").strip()
+    first_name = (callback.from_user.first_name or "").strip()
+    last_name = (callback.from_user.last_name or "").strip()
+    name_parts = [p for p in (first_name, last_name) if p]
+    full_name = " ".join(name_parts) if name_parts else "—"
+
+    text = (
+        "📬 <b>Пользователь запрашивает доступ к боту</b>\n\n"
+        f"<b>ID:</b> <code>{user_id}</code>\n"
+        f"<b>Username:</b> @{username}\n" if username else "<b>Username:</b> не указан\n"
+        f"<b>Имя:</b> {full_name}\n"
+    )
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Дать доступ",
+                    callback_data=f"access_req_grant_{user_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="❌ Отказать",
+                    callback_data=f"access_req_deny_{user_id}",
+                ),
+            ]
+        ]
+    )
+
+    try:
+        await callback.bot.send_message(ADMIN_ID, text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(
+            f"Не удалось отправить уведомление о запросе доступа админу {ADMIN_ID}: {e}",
+            exc_info=True,
+        )
+        await safe_callback_answer(
+            callback,
+            "Ошибка отправки запроса. Попробуйте позже.",
+            show_alert=True,
+        )
+
+
 # ---------- Переключение режима отчета ----------
 
 @router.callback_query(F.data.in_({"mode_full", "mode_brief"}))

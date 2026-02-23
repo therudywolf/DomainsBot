@@ -250,20 +250,18 @@ function Cmd-Export {
     Write-Host "  tgscanner    -> $tgImg"
     docker save $tgImg -o "$ExportDir\images\tgscanner.tar"
 
-    try { docker pull masipcat/wireguard-go:latest 2>$null } catch {}
-    $wgExists = docker image inspect masipcat/wireguard-go:latest 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  wireguard    -> masipcat/wireguard-go:latest"
-        docker save masipcat/wireguard-go:latest -o "$ExportDir\images\wireguard.tar"
-    } else {
-        Write-Warn "masipcat/wireguard-go:latest not available locally"
-    }
+    $wgImg = Find-DockerImage "^${pname}[-_]?wireguard"
+    if (-not $wgImg) { $wgImg = Find-DockerImage "wireguard" }
+    if (-not $wgImg) { Write-Err "wireguard image not found (run build first)"; exit 1 }
+    Write-Host "  wireguard    -> $wgImg"
+    docker save $wgImg -o "$ExportDir\images\wireguard.tar"
 
     Write-Step "Copying project files"
     Copy-Item "docker-compose.yml" "$ExportDir\project\"
     if (Test-Path ".env.example") { Copy-Item ".env.example" "$ExportDir\project\" }
     Copy-Item -Recurse "bot" "$ExportDir\project\"
     Copy-Item -Recurse "gost" "$ExportDir\project\"
+    if (Test-Path "wireguard") { Copy-Item -Recurse "wireguard" "$ExportDir\project\" }
     if (Test-Path "wg") { Copy-Item -Recurse "wg" "$ExportDir\project\" }
     if (Test-Path "scripts\deploy.sh") { Copy-Item "scripts\deploy.sh" "$ExportDir\project\" }
     if (Test-Path "manage.sh") { Copy-Item "manage.sh" "$ExportDir\project\" }
@@ -323,6 +321,9 @@ function Cmd-Deploy {
         $tgImg = Find-DockerImage "tgscanner"
         if ($tgImg) { docker tag $tgImg "bottgdomains-tgscanner:latest" 2>$null }
 
+        $wgImg = Find-DockerImage "wireguard"
+        if ($wgImg) { docker tag $wgImg "bottgdomains-wireguard:latest" 2>$null }
+
         @"
 services:
   gostsslcheck1:
@@ -334,7 +335,7 @@ services:
   tgscanner:
     image: bottgdomains-tgscanner:latest
   wireguard:
-    image: masipcat/wireguard-go:latest
+    image: bottgdomains-wireguard:latest
 "@ | Set-Content "docker-compose.override.yml" -Encoding UTF8
 
         Write-Ok "docker-compose.override.yml created"

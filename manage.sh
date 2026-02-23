@@ -232,13 +232,15 @@ cmd_export() {
     echo "  tgscanner    -> $tg_img"
     docker save "$tg_img" -o "$EXPORT_DIR/images/tgscanner.tar"
 
-    # wireguard
-    docker pull masipcat/wireguard-go:latest 2>/dev/null || true
-    if docker image inspect masipcat/wireguard-go:latest &>/dev/null; then
-        echo "  wireguard    -> masipcat/wireguard-go:latest"
-        docker save masipcat/wireguard-go:latest -o "$EXPORT_DIR/images/wireguard.tar"
+    # wireguard (built from ./wireguard in docker-compose)
+    local wg_img
+    wg_img=$(_find_image "^${PROJECT_NAME}[-_]?wireguard") || true
+    [ -z "$wg_img" ] && wg_img=$(_find_image "wireguard") || true
+    if [ -n "$wg_img" ]; then
+        echo "  wireguard    -> $wg_img"
+        docker save "$wg_img" -o "$EXPORT_DIR/images/wireguard.tar"
     else
-        warn "masipcat/wireguard-go:latest not available locally"
+        err "wireguard image not found (run build first)"; exit 1
     fi
 
     # 5 — copy project files
@@ -247,6 +249,7 @@ cmd_export() {
     [ -f .env.example ] && cp .env.example "$EXPORT_DIR/project/"
     cp -r bot "$EXPORT_DIR/project/"
     cp -r gost "$EXPORT_DIR/project/"
+    [ -d wireguard ] && cp -r wireguard "$EXPORT_DIR/project/"
     [ -d wg ] && cp -r wg "$EXPORT_DIR/project/"
     [ -f scripts/deploy.sh ] && cp scripts/deploy.sh "$EXPORT_DIR/project/" && chmod +x "$EXPORT_DIR/project/deploy.sh"
     [ -f manage.sh ] && cp manage.sh "$EXPORT_DIR/project/" && chmod +x "$EXPORT_DIR/project/manage.sh"
@@ -310,7 +313,12 @@ cmd_deploy() {
         tg_img=$(_find_image "tgscanner") || true
         [ -n "$tg_img" ] && docker tag "$tg_img" "bottgdomains-tgscanner:latest" 2>/dev/null || true
 
-        # override
+        # tag wireguard for override
+        local wg_img
+        wg_img=$(_find_image "wireguard") || true
+        [ -n "$wg_img" ] && docker tag "$wg_img" "bottgdomains-wireguard:latest" 2>/dev/null || true
+
+        # override: use pre-loaded images (no build on target)
         cat > docker-compose.override.yml << 'OVERRIDE'
 services:
   gostsslcheck1:
@@ -322,7 +330,7 @@ services:
   tgscanner:
     image: bottgdomains-tgscanner:latest
   wireguard:
-    image: masipcat/wireguard-go:latest
+    image: bottgdomains-wireguard:latest
 OVERRIDE
         info "docker-compose.override.yml created"
     else

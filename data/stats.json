@@ -1,21 +1,24 @@
 {
   "start_time": 1770983041.4717493,
-  "total_domains_checked": 6,
+  "total_domains_checked": 12,
   "total_users": [
     6323277521
   ],
   "domains_checked": {
-    "mos.ru": 2,
-    "llllllllllllll.com": 4
+    "mos.ru": 6,
+    "llllllllllllll.com": 4,
+    "google.com": 1,
+    "www.mos.ru": 1
   },
   "errors": {},
   "commands_used": {
-    "start": 3
+    "start": 3,
+    "history": 1
   },
   "errors_by_type": {},
   "activity_by_hour": {
     "8": 3,
-    "8": 3
+    "12": 6
   },
   "last_reset": "2026-02-13T11:44:01.471761"
 }

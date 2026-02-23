@@ -178,5 +178,276 @@
     },
     "waf": true,
     "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T12:17:20.147522",
+    "domain": "mos.ru",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [
+        "94.79.51.170"
+      ],
+      "AAAA": [],
+      "MX": [
+        "10 mx01.mos.ru."
+      ],
+      "NS": [
+        "ns1.mos.ru.",
+        "ns3.mos.ru.",
+        "ns4.mos.ru."
+      ],
+      "IP": [
+        "94.79.51.170"
+      ],
+      "TXT": [
+        "\"yandex-verification: ada20f70198d2619\"",
+        "\"google-site-verification=D9NAwDF7bjfTIxXLDNpqplFlIjM81mS3iGo_wVE5kkI\"",
+        "\"v=spf1 redirect=_spf.mos.ru\"",
+        "\"MS=ms95580307\"",
+        "\"google-site-verification=EgkuJTEuiGJDP1C6QIPRfC5WunbBihbxht-jjl6nNHc\"",
+        "\"mailru-verification: 8b427464cb1c5c34\"",
+        "\"ugcfUdGQWPaTZ6LEhvJVXJbo0vnVP/eUSLiVszaOreK9b0JgGQOQqK+GjhjHxBTOWqrTbKIF/ncrGiOG9rUhuw==\"",
+        "\"jkhsfkj43KJOHek34sdaf\""
+      ],
+      "CAA": [],
+      "SOA": [
+        "ns1.mos.ru. domains.it.mos.ru. 23272 10800 3600 2419200 900"
+      ]
+    },
+    "ssl": {
+      "CN": "*.mos.ru",
+      "gost": true,
+      "not_after": "2026-11-15T13:38:42+00:00",
+      "gost_not_after": null
+    },
+    "waf": true,
+    "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T12:18:23.470827",
+    "domain": "google.com",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [
+        "142.251.38.78"
+      ],
+      "AAAA": [
+        "2a00:1450:4026:800::200e"
+      ],
+      "MX": [
+        "10 smtp.google.com."
+      ],
+      "NS": [
+        "ns3.google.com.",
+        "ns2.google.com.",
+        "ns4.google.com.",
+        "ns1.google.com."
+      ],
+      "IP": [
+        "142.251.38.78"
+      ],
+      "TXT": [
+        "\"globalsign-smime-dv=CDYX+XFHUw2wml6/Gb8+59BsH31KzUr6c1l2BPvqKX8=\"",
+        "\"google-site-verification=wD8N7i1JTNTkezJ49swvWW48f8_9xveREV4oB-0Hf5o\"",
+        "\"docusign=05958488-4752-4ef2-95eb-aa7ba8a3bd0e\"",
+        "\"v=spf1 include:_spf.google.com ~all\"",
+        "\"facebook-domain-verification=22rm551cu4k0ab0bxsw536tlds4h95\"",
+        "\"google-site-verification=TV9-DBe4R80X4v0M4U_bd_J9cpOJM0nikft0jAgjmsQ\"",
+        "\"MS=E4A68B9AB2BB9670BCE15412F62916164C0B20BB\"",
+        "\"google-site-verification=4ibFUgB-wXLQ_S7vsXVomSTVamuOXBiVAzpR5IZ87D0\"",
+        "\"cisco-ci-domain-verification=47c38bc8c4b74b7233e9053220c1bbe76bcc1cd33c7acf7acd36cd6a5332004b\"",
+        "\"docusign=1b0a6754-49b1-4db5-8540-d2c12664b289\"",
+        "\"apple-domain-verification=30afIBcvSuDV2PLX\"",
+        "\"onetrust-domain-verification=6d685f1d41a94696ad7ef771f68993e0\""
+      ],
+      "CAA": [],
+      "SOA": [
+        "ns1.google.com. dns-admin.google.com. 873609184 900 900 1800 60"
+      ]
+    },
+    "ssl": {
+      "CN": "*.google.com",
+      "gost": false,
+      "not_after": "2026-04-20T08:39:19+00:00",
+      "gost_not_after": null
+    },
+    "waf": true,
+    "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T12:21:02.959481",
+    "domain": "mos.ru",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [
+        "94.79.51.170"
+      ],
+      "AAAA": [],
+      "MX": [
+        "10 mx01.mos.ru."
+      ],
+      "NS": [
+        "ns1.mos.ru.",
+        "ns3.mos.ru.",
+        "ns4.mos.ru."
+      ],
+      "IP": [
+        "94.79.51.170"
+      ],
+      "TXT": [
+        "\"yandex-verification: ada20f70198d2619\"",
+        "\"google-site-verification=D9NAwDF7bjfTIxXLDNpqplFlIjM81mS3iGo_wVE5kkI\"",
+        "\"v=spf1 redirect=_spf.mos.ru\"",
+        "\"MS=ms95580307\"",
+        "\"google-site-verification=EgkuJTEuiGJDP1C6QIPRfC5WunbBihbxht-jjl6nNHc\"",
+        "\"mailru-verification: 8b427464cb1c5c34\"",
+        "\"ugcfUdGQWPaTZ6LEhvJVXJbo0vnVP/eUSLiVszaOreK9b0JgGQOQqK+GjhjHxBTOWqrTbKIF/ncrGiOG9rUhuw==\"",
+        "\"jkhsfkj43KJOHek34sdaf\""
+      ],
+      "CAA": [],
+      "SOA": [
+        "ns1.mos.ru. domains.it.mos.ru. 23272 10800 3600 2419200 900"
+      ]
+    },
+    "ssl": {
+      "CN": "*.mos.ru",
+      "gost": true,
+      "not_after": "2026-11-15T13:38:42+00:00",
+      "gost_not_after": null
+    },
+    "waf": true,
+    "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T12:21:22.574772",
+    "domain": "mos.ru",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [
+        "94.79.51.170"
+      ],
+      "AAAA": [],
+      "MX": [
+        "10 mx01.mos.ru."
+      ],
+      "NS": [
+        "ns1.mos.ru.",
+        "ns3.mos.ru.",
+        "ns4.mos.ru."
+      ],
+      "IP": [
+        "94.79.51.170"
+      ],
+      "TXT": [
+        "\"yandex-verification: ada20f70198d2619\"",
+        "\"google-site-verification=D9NAwDF7bjfTIxXLDNpqplFlIjM81mS3iGo_wVE5kkI\"",
+        "\"v=spf1 redirect=_spf.mos.ru\"",
+        "\"MS=ms95580307\"",
+        "\"google-site-verification=EgkuJTEuiGJDP1C6QIPRfC5WunbBihbxht-jjl6nNHc\"",
+        "\"mailru-verification: 8b427464cb1c5c34\"",
+        "\"ugcfUdGQWPaTZ6LEhvJVXJbo0vnVP/eUSLiVszaOreK9b0JgGQOQqK+GjhjHxBTOWqrTbKIF/ncrGiOG9rUhuw==\"",
+        "\"jkhsfkj43KJOHek34sdaf\""
+      ],
+      "CAA": [],
+      "SOA": [
+        "ns1.mos.ru. domains.it.mos.ru. 23272 10800 3600 2419200 900"
+      ]
+    },
+    "ssl": {
+      "CN": "*.mos.ru",
+      "gost": true,
+      "not_after": "2026-11-15T13:38:42+00:00",
+      "gost_not_after": null
+    },
+    "waf": true,
+    "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T12:21:28.041115",
+    "domain": "www.mos.ru",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [
+        "94.79.51.171"
+      ],
+      "AAAA": [],
+      "MX": [
+        "10 mx01.mos.ru."
+      ],
+      "NS": [
+        "ns1.mos.ru.",
+        "ns4.mos.ru.",
+        "ns3.mos.ru."
+      ],
+      "IP": [
+        "94.79.51.171"
+      ],
+      "TXT": [
+        "\"ugcfUdGQWPaTZ6LEhvJVXJbo0vnVP/eUSLiVszaOreK9b0JgGQOQqK+GjhjHxBTOWqrTbKIF/ncrGiOG9rUhuw==\"",
+        "\"jkhsfkj43KJOHek34sdaf\"",
+        "\"yandex-verification: ada20f70198d2619\"",
+        "\"google-site-verification=D9NAwDF7bjfTIxXLDNpqplFlIjM81mS3iGo_wVE5kkI\"",
+        "\"v=spf1 redirect=_spf.mos.ru\"",
+        "\"MS=ms95580307\"",
+        "\"google-site-verification=EgkuJTEuiGJDP1C6QIPRfC5WunbBihbxht-jjl6nNHc\"",
+        "\"mailru-verification: 8b427464cb1c5c34\""
+      ],
+      "CAA": [],
+      "SOA": [
+        "ns1.mos.ru. domains.it.mos.ru. 23272 10800 3600 2419200 900"
+      ]
+    },
+    "ssl": {
+      "CN": "*.mos.ru",
+      "gost": true,
+      "not_after": "2026-11-15T13:38:42+00:00",
+      "gost_not_after": null
+    },
+    "waf": true,
+    "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T12:22:02.862525",
+    "domain": "mos.ru",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [
+        "94.79.51.170"
+      ],
+      "AAAA": [],
+      "MX": [
+        "10 mx01.mos.ru."
+      ],
+      "NS": [
+        "ns1.mos.ru.",
+        "ns3.mos.ru.",
+        "ns4.mos.ru."
+      ],
+      "IP": [
+        "94.79.51.170"
+      ],
+      "TXT": [
+        "\"yandex-verification: ada20f70198d2619\"",
+        "\"google-site-verification=D9NAwDF7bjfTIxXLDNpqplFlIjM81mS3iGo_wVE5kkI\"",
+        "\"v=spf1 redirect=_spf.mos.ru\"",
+        "\"MS=ms95580307\"",
+        "\"google-site-verification=EgkuJTEuiGJDP1C6QIPRfC5WunbBihbxht-jjl6nNHc\"",
+        "\"mailru-verification: 8b427464cb1c5c34\"",
+        "\"ugcfUdGQWPaTZ6LEhvJVXJbo0vnVP/eUSLiVszaOreK9b0JgGQOQqK+GjhjHxBTOWqrTbKIF/ncrGiOG9rUhuw==\"",
+        "\"jkhsfkj43KJOHek34sdaf\""
+      ],
+      "CAA": [],
+      "SOA": [
+        "ns1.mos.ru. domains.it.mos.ru. 23272 10800 3600 2419200 900"
+      ]
+    },
+    "ssl": {
+      "CN": "*.mos.ru",
+      "gost": true,
+      "not_after": "2026-11-15T13:38:42+00:00",
+      "gost_not_after": null
+    },
+    "waf": true,
+    "waf_method": "policy"
   }
 ]

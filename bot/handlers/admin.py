@@ -53,6 +53,64 @@ router = Router()
 
 
 # ------------------------------------------------------------------ #
+#  Запрос доступа: Дать доступ / Отказать (только главный админ)
+# ------------------------------------------------------------------ #
+
+@router.callback_query(F.data.startswith("access_req_grant_"))
+async def access_req_grant(callback: types.CallbackQuery):
+    """Главный админ нажал «Дать доступ» по запросу пользователя."""
+    if not callback.from_user or not is_main_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "Только главный администратор", show_alert=True)
+        return
+    try:
+        user_id = int(callback.data.replace("access_req_grant_", ""))
+    except ValueError:
+        await safe_callback_answer(callback, "Ошибка: неверный ID", show_alert=True)
+        return
+    await safe_callback_answer(callback, "Доступ выдан")
+    add_access(user_id, "")
+    try:
+        await callback.bot.send_message(
+            user_id,
+            "Вам предоставлен доступ к боту. Напишите /start.",
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось уведомить пользователя {user_id}: {e}")
+    try:
+        await callback.message.edit_text(
+            f"✅ Доступ выдан пользователю <b>{user_id}</b>.",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[]),
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(F.data.startswith("access_req_deny_"))
+async def access_req_deny(callback: types.CallbackQuery):
+    """Главный админ нажал «Отказать» по запросу пользователя."""
+    if not callback.from_user or not is_main_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "Только главный администратор", show_alert=True)
+        return
+    try:
+        user_id = int(callback.data.replace("access_req_deny_", ""))
+    except ValueError:
+        await safe_callback_answer(callback, "Ошибка: неверный ID", show_alert=True)
+        return
+    await safe_callback_answer(callback, "В доступе отказано")
+    try:
+        await callback.bot.send_message(user_id, "В доступе отказано.")
+    except Exception:
+        pass
+    try:
+        await callback.message.edit_text(
+            "❌ В доступе отказано.",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[]),
+        )
+    except TelegramBadRequest:
+        pass
+
+
+# ------------------------------------------------------------------ #
 #  admin_add_access
 # ------------------------------------------------------------------ #
 
