@@ -99,14 +99,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
     
     bot_username = await get_bot_username(message.bot)
     help_text = (
-        "👋 *Добро пожаловать в Domain Scanner Bot!*\n\n"
+        "👋 <b>Добро пожаловать в Domain Scanner Bot!</b>\n\n"
         "Я помогаю анализировать домены и получать информацию о:\n"
         "• DNS записях (A, AAAA, MX, NS)\n"
         "• SSL сертификатах (обычный и GOST)\n"
         "• WAF защите\n\n"
-        "📋 *Доступные вам функции:*\n"
+        "📋 <b>Доступные вам функции:</b>\n"
         f"{features_text}\n\n"
-        "📥 *Как использовать:*\n"
+        "📥 <b>Как использовать:</b>\n"
         "• Просто отправьте домен(ы) текстом\n"
         "• Или используйте кнопки меню ниже\n"
         f"• Или вызовите бота в любом чате через @{bot_username}\n\n"
@@ -115,7 +115,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     await message.answer(
         help_text,
-        parse_mode=ParseMode.MARKDOWN,
         reply_markup=build_main_menu_keyboard(user_id),
     )
 
@@ -134,7 +133,7 @@ async def cmd_health(message: types.Message, state: FSMContext):
         return
     
     health_status = []
-    health_status.append("🏥 *Health Check*\n")
+    health_status.append("🏥 <b>Health Check</b>\n")
     
     try:
         from utils.cache import get_cache_stats
@@ -177,7 +176,7 @@ async def cmd_health(message: types.Message, state: FSMContext):
     except Exception as e:
         health_status.append(f"❌ WireGuard: Ошибка — {e}")
     
-    await message.answer("\n".join(health_status), parse_mode="Markdown")
+    await message.answer("\n".join(health_status))
 
 
 @router.message(Command("help"))
@@ -192,32 +191,31 @@ async def cmd_help(message: types.Message, state: FSMContext):
     
     bot_username = await get_bot_username(message.bot)
     help_text = (
-        "ℹ️ *Справка по использованию бота*\n\n"
-        "🔍 *Проверка доменов:*\n"
+        "ℹ️ <b>Справка по использованию бота</b>\n\n"
+        "🔍 <b>Проверка доменов:</b>\n"
         "• Отправьте домен(ы) текстом или через кнопку 'Проверить домен'\n"
-        "• Поддерживаются URL: `https://example.com/path` → `example.com`\n"
-        "• Можно отправить файл `.txt` со списком доменов\n"
+        "• Поддерживаются URL: <code>https://example.com/path</code> → <code>example.com</code>\n"
+        "• Можно отправить файл .txt со списком доменов\n"
         "• При 4+ доменах вы получите CSV-отчёт\n\n"
-        "📊 *Мониторинг:*\n"
-        "• Команда `/monitor` или кнопка 'Мониторинг'\n"
+        "📊 <b>Мониторинг:</b>\n"
+        "• Команда /monitor или кнопка 'Мониторинг'\n"
         "• Добавьте домены для отслеживания изменений\n"
         "• Получайте уведомления при изменениях GOST, WAF, сертификатов, DNS\n\n"
-        "⚙️ *Настройки:*\n"
+        "⚙️ <b>Настройки:</b>\n"
         "• Режим отчета: Расширенный (с DNS) или Короткий\n"
         "• Режим WAF: Policy-based или Light check\n"
         "• Все настройки сохраняются для вашего аккаунта\n\n"
-        "📋 *История:*\n"
-        "• Команда `/history` или кнопка 'История'\n"
+        "📋 <b>История:</b>\n"
+        "• Команда /history или кнопка 'История'\n"
         "• Просмотр последних проверенных доменов\n\n"
-        f"💡 *Совет:* Используйте inline режим в любом чате:\n"
-        f"Напишите `@{bot_username} example.com` для быстрой проверки!"
+        f"💡 <b>Совет:</b> Используйте inline режим в любом чате:\n"
+        f"Напишите <code>@{bot_username} example.com</code> для быстрой проверки!"
     )
     
     await safe_send_text(
         message.bot,
         message.chat.id,
         help_text,
-        parse_mode=ParseMode.MARKDOWN,
         reply_markup=build_main_menu_keyboard(user_id),
     )
 
@@ -243,30 +241,30 @@ async def cmd_stats(message: types.Message):
     stats = get_stats()
     
     text = (
-        "📊 *Статистика бота*\n\n"
-        f"⏱️ *Время работы:*\n"
+        "📊 <b>Статистика бота</b>\n\n"
+        f"⏱️ <b>Время работы:</b>\n"
         f"• Дней: {stats['uptime_days']}\n"
         f"• Часов: {stats['uptime_hours']}\n"
         f"• Секунд: {stats['uptime_seconds']}\n\n"
-        f"📈 *Использование:*\n"
+        f"📈 <b>Использование:</b>\n"
         f"• Проверено доменов: {stats['total_domains_checked']}\n"
         f"• Уникальных пользователей: {stats['total_users']}\n\n"
     )
     
     if stats['top_domains']:
-        text += "🔝 *Топ доменов:*\n"
+        text += "🔝 <b>Топ доменов:</b>\n"
         for domain, count in list(stats['top_domains'].items())[:5]:
             text += f"• {domain}: {count}\n"
         text += "\n"
     
     if stats['top_commands']:
-        text += "⚙️ *Топ команд:*\n"
+        text += "⚙️ <b>Топ команд:</b>\n"
         for cmd, count in list(stats['top_commands'].items())[:5]:
             text += f"• {cmd}: {count}\n"
         text += "\n"
     
     if stats['top_errors']:
-        text += "⚠️ *Топ ошибок:*\n"
+        text += "⚠️ <b>Топ ошибок:</b>\n"
         for error, count in list(stats['top_errors'].items())[:5]:
             text += f"• {error}: {count}\n"
     
@@ -285,7 +283,6 @@ async def cmd_stats(message: types.Message):
                     bot,
                     message.chat.id,
                     text,
-                    parse_mode=ParseMode.MARKDOWN
                 )
             finally:
                 await bot.session.close()
@@ -294,7 +291,6 @@ async def cmd_stats(message: types.Message):
                 bot,
                 message.chat.id,
                 text,
-                parse_mode=ParseMode.MARKDOWN
             )
     except Exception as e:
         logger.error(
@@ -306,7 +302,6 @@ async def cmd_stats(message: types.Message):
         try:
             await message.answer(
                 "❌ Ошибка при загрузке статистики. Попробуйте позже.",
-                parse_mode=ParseMode.MARKDOWN
             )
         except Exception:
             pass
@@ -430,7 +425,7 @@ async def cmd_history(message: types.Message):
         await message.answer("📋 История проверок пуста.")
         return
     
-    text = "📋 *История проверок:*\n\n"
+    text = "📋 <b>История проверок:</b>\n\n"
     
     for i, entry in enumerate(history, 1):
         domain = entry.get("domain", "unknown")
@@ -445,7 +440,7 @@ async def cmd_history(message: types.Message):
             date_str = timestamp[:16] if timestamp else "unknown"
         
         text += (
-            f"{i}. *{domain}*\n"
+            f"{i}. <b>{domain}</b>\n"
             f"   📅 {date_str}\n"
             f"   GOST: {'✅' if gost else '❌'} | WAF: {'✅' if waf else '❌'}\n\n"
         )
@@ -454,7 +449,6 @@ async def cmd_history(message: types.Message):
         message.bot,
         message.chat.id,
         text,
-        parse_mode=ParseMode.MARKDOWN
     )
 
 
@@ -473,7 +467,7 @@ async def cmd_monitor(message: types.Message):
     domains = await get_monitored_domains(user_id)
     
     text = (
-        f"📊 *Мониторинг доменов*\n\n"
+        f"📊 <b>Мониторинг доменов</b>\n\n"
         f"Статус: {'✅ Включен' if enabled else '❌ Выключен'}\n"
         f"Интервал проверки: {interval} минут\n"
         f"Доменов в мониторинге: {len(domains)}\n\n"
@@ -484,6 +478,5 @@ async def cmd_monitor(message: types.Message):
         message.bot,
         message.chat.id,
         text,
-        parse_mode=ParseMode.MARKDOWN,
         reply_markup=build_monitoring_keyboard(user_id)
     )

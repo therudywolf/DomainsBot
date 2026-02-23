@@ -26,6 +26,7 @@ from access import (
     has_access,
     has_permission,
     check_access,
+    check_access_callback,
     ADMIN_ID,
     PERMISSIONS,
     get_bot_username,
@@ -127,16 +128,7 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
         f"callback_data={callback_data}"
     )
     
-    # Проверка доступа
-    if not has_access(user_id):
-        logger.warning(f"❌ Доступ запрещен для user_id={user_id} при переключении режима")
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
-        return
-    
-    # Проверка разрешения на настройки
-    if not has_permission(user_id, "settings"):
-        logger.warning(f"❌ Нет разрешения на настройки для user_id={user_id} при переключении режима")
-        await safe_callback_answer(callback, "❌ Нет доступа к настройкам", show_alert=True)
+    if not await check_access_callback(callback, "settings"):
         return
     
     new_mode = "full" if callback.data == "mode_full" else "brief"
@@ -241,19 +233,11 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.in_({"waf_mode_policy", "waf_mode_light"}))
 async def switch_waf_mode(callback: types.CallbackQuery):
     """Переключает режим проверки WAF."""
-    user_id = callback.from_user.id
-    
-    # Проверка доступа
-    if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
-        return
-    
-    # Проверка разрешения на настройки
-    if not has_permission(user_id, "settings"):
-        await safe_callback_answer(callback, "❌ Нет доступа к настройкам", show_alert=True)
+    if not await check_access_callback(callback, "settings"):
         return
     
     new_mode = "policy" if callback.data == "waf_mode_policy" else "light"
+    user_id = callback.from_user.id
     set_waf_mode(user_id, new_mode)
 
     await safe_callback_answer(
@@ -430,19 +414,17 @@ async def _recheck_domain(
 @router.callback_query(F.data.startswith("recheckext_"))
 async def quick_recheck_external(callback: types.CallbackQuery, state: FSMContext):
     """Перепроверка домена только через внешнюю сеть (без GOST/WireGuard)."""
+    await safe_callback_answer(callback, "🌐 Проверяю через внешнюю сеть...")
     start_time = asyncio.get_running_loop().time()
     user_id = callback.from_user.id
     
     if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
     if not has_permission(user_id, "check_domains"):
-        await safe_callback_answer(callback, "❌ Нет доступа к проверке доменов", show_alert=True)
         return
     
     domain = callback.data.removeprefix("recheckext_")
     logger.info(f"🌐 Проверка через внешнюю сеть | user_id={user_id} | domain={domain}")
-    await safe_callback_answer(callback, "🌐 Проверяю через внешнюю сеть...")
     
     try:
         await _recheck_domain(callback.message, state, domain, requester_id=user_id, use_external_only=True)
@@ -457,6 +439,8 @@ async def quick_recheck_external(callback: types.CallbackQuery, state: FSMContex
 @router.callback_query(F.data.startswith("recheck_"))
 async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
     """Быстрая перепроверка домена."""
+    # Немедленный ответ, чтобы избежать "query is too old" при долгой проверке
+    await safe_callback_answer(callback, "🔄 Перепроверяю домен...")
     start_time = asyncio.get_running_loop().time()
     user_id = callback.from_user.id
     
@@ -468,18 +452,14 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
     
     if not has_access(user_id):
         logger.warning(f"❌ Доступ запрещен для user_id={user_id} при перепроверке")
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
     
     if not has_permission(user_id, "check_domains"):
         logger.warning(f"❌ Нет разрешения на проверку доменов для user_id={user_id}")
-        await safe_callback_answer(callback, "❌ Нет доступа к проверке доменов", show_alert=True)
         return
     
     domain = callback.data.removeprefix("recheck_")
     logger.debug(f"Перепроверка домена {domain} для user_id={user_id}")
-    
-    await safe_callback_answer(callback, "🔄 Перепроверяю домен...")
     
     try:
         await _recheck_domain(callback.message, state, domain, requester_id=user_id)
@@ -507,24 +487,16 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
 async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
     """
     Быстрая проверка WAF для домена через отправку тестовой инъекции.
-    
-    Использует специальную проверку с инъекциями для гарантированного получения 403,
-    если WAF присутствует.
     """
+    await safe_callback_answer(callback, "🛡️ Проверяю WAF...")
     user_id = callback.from_user.id
     
     if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
-    
     if not has_permission(user_id, "check_domains"):
-        await safe_callback_answer(callback, "❌ Нет доступа к проверке доменов", show_alert=True)
         return
     
-    # Извлекаем домен
     domain = callback.data.replace("quick_waf_", "")
-    
-    await safe_callback_answer(callback, "🛡️ Проверяю WAF через инъекцию...")
     
     try:
         # Обновляем сообщение
@@ -580,20 +552,15 @@ async def quick_waf_check(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("quick_certs_"))
 async def quick_certs_check(callback: types.CallbackQuery, state: FSMContext):
     """Быстрая проверка сертификатов для домена."""
+    await safe_callback_answer(callback, "📅 Проверяю сертификаты...")
     user_id = callback.from_user.id
     
     if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
-    
     if not has_permission(user_id, "check_domains"):
-        await safe_callback_answer(callback, "❌ Нет доступа к проверке доменов", show_alert=True)
         return
     
-    # Извлекаем домен
     domain = callback.data.replace("quick_certs_", "")
-    
-    await safe_callback_answer(callback, "📅 Проверяю сертификаты...")
     
     try:
         # Обновляем сообщение
@@ -656,16 +623,13 @@ async def quick_certs_check(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("detail_dns_"))
 async def show_dns_details(callback: types.CallbackQuery):
     """Показывает детальную информацию о DNS записях."""
+    await safe_callback_answer(callback, "📡 Загружаю DNS записи...")
     user_id = callback.from_user.id
     
     if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
     
-    # Извлекаем домен
     domain = callback.data.replace("detail_dns_", "")
-    
-    await safe_callback_answer(callback, "📡 Загружаю DNS записи...")
     
     try:
         # Получаем DNS информацию
@@ -750,16 +714,13 @@ async def show_dns_details(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("detail_ssl_"))
 async def show_ssl_details(callback: types.CallbackQuery):
     """Показывает детальную информацию о SSL сертификатах."""
+    await safe_callback_answer(callback, "🔒 Загружаю сертификаты...")
     user_id = callback.from_user.id
     
     if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
     
-    # Извлекаем домен
     domain = callback.data.replace("detail_ssl_", "")
-    
-    await safe_callback_answer(callback, "🔒 Загружаю информацию о сертификатах...")
     
     try:
         # Получаем SSL информацию
@@ -857,20 +818,15 @@ async def show_ssl_details(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("detail_waf_"))
 async def show_waf_details(callback: types.CallbackQuery):
     """Показывает детальную информацию о WAF."""
+    await safe_callback_answer(callback, "🛡️ Проверяю WAF...")
     user_id = callback.from_user.id
     
     if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
-    
     if not has_permission(user_id, "check_domains"):
-        await safe_callback_answer(callback, "❌ Нет доступа к проверке WAF", show_alert=True)
         return
     
-    # Извлекаем домен
     domain = callback.data.replace("detail_waf_", "")
-    
-    await safe_callback_answer(callback, "🛡️ Проверяю WAF...")
     
     try:
         # Выполняем проверку WAF
@@ -1033,14 +989,11 @@ async def main_menu_callback(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     
     help_text = (
-        "🏠 *Главное меню*\n\n"
+        "🏠 <b>Главное меню</b>\n\n"
         "Выберите действие из меню ниже или отправьте домен для проверки."
     )
     
-    await callback.message.edit_text(
-        help_text,
-        parse_mode=ParseMode.MARKDOWN,
-    )
+    await callback.message.edit_text(help_text)
     
     await callback.message.answer(
         "Используйте кнопки меню для быстрого доступа:",
@@ -1102,13 +1055,12 @@ async def settings_notification_chat(callback: types.CallbackQuery):
     
     if not known_chats:
         await callback.message.edit_text(
-            "💬 *Настройка чата для уведомлений*\n\n"
+            "💬 <b>Настройка чата для уведомлений</b>\n\n"
             "У вас пока нет зарегистрированных чатов.\n\n"
             "Чтобы добавить чат:\n"
             "1. Добавьте бота в группу и выдайте право отправки сообщений\n"
             "2. Отправьте любое сообщение в этом чате\n"
             "3. Или укажите ID чата вручную (для супергрупп ID отрицательный, например -100…)",
-            parse_mode=ParseMode.MARKDOWN,
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
@@ -1130,17 +1082,17 @@ async def settings_notification_chat(callback: types.CallbackQuery):
         return
     
     # Формируем список чатов
-    chat_list_text = "💬 *Настройка чата для уведомлений*\n\n"
+    chat_list_text = "💬 <b>Настройка чата для уведомлений</b>\n\n"
     if current_chat_id:
         current_chat = next((c for c in known_chats if c.get("chat_id") == current_chat_id), None)
         if current_chat:
-            chat_list_text += f"✅ Текущий чат: *{current_chat.get('title')}* (ID: {current_chat_id})\n\n"
+            chat_list_text += f"✅ Текущий чат: <b>{current_chat.get('title')}</b> (ID: {current_chat_id})\n\n"
         else:
             chat_list_text += f"✅ Текущий чат: ID {current_chat_id}\n\n"
     else:
         chat_list_text += "📭 Уведомления отправляются в личные сообщения\n\n"
     
-    chat_list_text += "*Доступные чаты:*\n"
+    chat_list_text += "<b>Доступные чаты:</b>\n"
     
     keyboard = []
     for chat in known_chats:
@@ -1178,7 +1130,6 @@ async def settings_notification_chat(callback: types.CallbackQuery):
     
     await callback.message.edit_text(
         chat_list_text,
-        parse_mode=ParseMode.MARKDOWN,
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
     await safe_callback_answer(callback, "")
@@ -1229,14 +1180,13 @@ async def select_notification_chat(callback: types.CallbackQuery):
 async def set_notification_chat_id_handler(callback: types.CallbackQuery, state: FSMContext):
     """Запрашивает ID чата для уведомлений."""
     await callback.message.edit_text(
-        "💬 *Указать ID чата для уведомлений*\n\n"
+        "💬 <b>Указать ID чата для уведомлений</b>\n\n"
         "Отправьте ID чата (число). Для супергрупп укажите отрицательный ID (например -1001234567890).\n\n"
         "Важно: бот должен быть добавлен в группу и иметь право отправлять сообщения.\n\n"
         "Как узнать ID чата:\n"
         "• Добавьте бота @userinfobot в чат\n"
         "• Или используйте @RawDataBot\n"
         "• Или используйте API Telegram",
-        parse_mode=ParseMode.MARKDOWN,
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -1293,9 +1243,8 @@ async def settings_back(callback: types.CallbackQuery):
     """Возврат в меню настроек."""
     user_id = callback.from_user.id
     await callback.message.edit_text(
-        "⚙️ *Настройки*\n\n"
+        "⚙️ <b>Настройки</b>\n\n"
         "Выберите параметр для изменения:",
-        parse_mode=ParseMode.MARKDOWN,
         reply_markup=build_settings_keyboard(user_id)
     )
     await safe_callback_answer(callback, "")

@@ -92,12 +92,11 @@ async def process_add_access(message: types.Message, state: FSMContext):
     if nav:
         await state.clear()
         if nav == "admin" and message.from_user and is_admin_user(message.from_user.id):
-            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
+            help_text = "👨‍💼 <b>Админ-панель</b>\n\nИспользуйте кнопки ниже для управления доступом:"
             await safe_send_text(
                 message.bot,
                 message.chat.id,
                 help_text,
-                parse_mode=ParseMode.MARKDOWN,
                 reply_markup=build_admin_keyboard(message.from_user.id),
             )
         else:
@@ -162,24 +161,24 @@ async def process_add_access(message: types.Message, state: FSMContext):
         response += "\n\n" + "\n".join(errors)
     
     response += (
-        "\n\n💡 *Совет:* Используйте 'Управление разрешениями' в админ-панели "
+        "\n\n💡 <b>Совет:</b> Используйте 'Управление разрешениями' в админ-панели "
         "для настройки доступа к конкретным функциям."
     )
     
-    await message.answer(response, parse_mode=ParseMode.MARKDOWN)
+    await message.answer(response)
     
     if added_count == 1 and added_users:
         user_id = added_users[0]
         permissions = get_user_permissions(user_id)
         
-        perms_text = "📋 *Разрешения по умолчанию:*\n\n"
+        perms_text = "📋 <b>Разрешения по умолчанию:</b>\n\n"
         for perm_key, perm_name in PERMISSIONS.items():
             status = "✅" if permissions.get(perm_key, False) else "❌"
             perms_text += f"{status} {perm_name}\n"
         
         perms_text += "\nИспользуйте 'Управление разрешениями' для изменения."
         
-        await message.answer(perms_text, parse_mode=ParseMode.MARKDOWN)
+        await message.answer(perms_text)
     
     await state.clear()
 
@@ -198,7 +197,7 @@ async def admin_remove_access(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "🗑️ Введите TG ID пользователя(ей) для удаления доступа.\n\n"
         "Можно вводить несколько через пробел или запятую:\n"
-        "`123456789 987654321`"
+        "<code>123456789 987654321</code>"
     )
     await safe_callback_answer(callback, "")
 
@@ -218,12 +217,11 @@ async def process_remove_access(message: types.Message, state: FSMContext):
     if nav:
         await state.clear()
         if nav == "admin" and message.from_user and is_admin_user(message.from_user.id):
-            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
+            help_text = "👨‍💼 <b>Админ-панель</b>\n\nИспользуйте кнопки ниже для управления доступом:"
             await safe_send_text(
                 message.bot,
                 message.chat.id,
                 help_text,
-                parse_mode=ParseMode.MARKDOWN,
                 reply_markup=build_admin_keyboard(message.from_user.id),
             )
         else:
@@ -295,8 +293,8 @@ async def admin_list_access(callback: types.CallbackQuery):
         await callback.message.answer("❌ Ошибка: бот недоступен")
         return
     
-    lines = [f"👑 *Главный админ:* ID {ADMIN_ID}\n"]
-    lines.append("📋 *Список пользователей и их разрешения:*\n")
+    lines = [f"👑 <b>Главный админ:</b> ID {ADMIN_ID}\n"]
+    lines.append("📋 <b>Список пользователей и их разрешения:</b>\n")
     
     user_ids = [int(user_id) for user_id in db.keys() if str(user_id).isdigit()]
     
@@ -322,7 +320,7 @@ async def admin_list_access(callback: types.CallbackQuery):
         user_is_admin = data.get("is_admin", False)
         
         role_badge = " 👑 (админ)" if user_is_admin else ""
-        user_info = f"*ID: {user_id}*{role_badge}"
+        user_info = f"<b>ID: {user_id}</b>{role_badge}"
         if current_username:
             user_info += f" (@{current_username})"
         if added_at:
@@ -335,7 +333,7 @@ async def admin_list_access(callback: types.CallbackQuery):
                 pn = PERMISSIONS.get(pk, pk)
                 st = "✅" if permissions.get(pk, False) else "❌"
                 group_perms.append(f"{st} {pn}")
-            lines.append(f"  *{group_name}:* " + ", ".join(group_perms))
+            lines.append(f"  <b>{group_name}:</b> " + ", ".join(group_perms))
         lines.append("")
     
     text = "\n".join(lines)
@@ -346,7 +344,7 @@ async def admin_list_access(callback: types.CallbackQuery):
             types.BufferedInputFile(buf.getvalue(), filename="access_list.txt")
         )
     else:
-        await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+        await callback.message.answer(text)
 
 
 # ------------------------------------------------------------------ #
@@ -392,7 +390,7 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
         elif isinstance(username_result, BaseException):
             logger.debug(f"Ошибка получения username для {user_id}: {username_result}")
     
-    users_list = "👥 *Выберите пользователя для управления разрешениями:*\n\n"
+    users_list = "👥 <b>Выберите пользователя для управления разрешениями:</b>\n\n"
     for user_id, data in sorted(db.items(), key=lambda x: (int(x[0]) if str(x[0]).isdigit() else 0)):
         uid = int(user_id) if str(user_id).isdigit() else 0
         if uid in username_map:
@@ -406,7 +404,7 @@ async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMCont
     
     users_list += "\nВведите TG ID или @username пользователя:"
     
-    await callback.message.answer(users_list, parse_mode=ParseMode.MARKDOWN)
+    await callback.message.answer(users_list)
 
 
 # ------------------------------------------------------------------ #
@@ -473,12 +471,11 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
     if nav:
         await state.clear()
         if nav == "admin" and message.from_user and is_admin_user(message.from_user.id):
-            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
+            help_text = "👨‍💼 <b>Админ-панель</b>\n\nИспользуйте кнопки ниже для управления доступом:"
             await safe_send_text(
                 message.bot,
                 message.chat.id,
                 help_text,
-                parse_mode=ParseMode.MARKDOWN,
                 reply_markup=build_admin_keyboard(message.from_user.id),
             )
         else:
@@ -886,21 +883,22 @@ async def admin_export_users(callback: types.CallbackQuery):
     
     json_data = json.dumps(export_data, ensure_ascii=False, indent=2, default=str)
     
-    text_lines = ["📤 *Экспорт пользователей*\n\n"]
+    text_lines = ["📤 <b>Экспорт пользователей</b>\n\n"]
     text_lines.append("Формат для добавления:\n")
-    text_lines.append("```")
+    text_lines.append("<pre>")
     
     for user_id, user_data in export_data.items():
         uid = user_data["user_id"]
         username = user_data["username"]
-        text_lines.append(f"{uid}  # @{username}" if username else f"{uid}")
+        line = f"{uid}  # @{username}" if username else f"{uid}"
+        text_lines.append(line.replace("<", "&lt;").replace(">", "&gt;"))
     
-    text_lines.append("```")
+    text_lines.append("</pre>")
     text_lines.append("\nИли используйте JSON файл ниже для полного переноса.")
     
     text_msg = "\n".join(text_lines)
     
-    await callback.message.answer(text_msg, parse_mode=ParseMode.MARKDOWN)
+    await callback.message.answer(text_msg)
     
     json_bytes = json_data.encode("utf-8")
     buf = io.BytesIO(json_bytes)
@@ -924,32 +922,32 @@ async def admin_check_wg(callback: types.CallbackQuery):
 
     status = check_wg_connection()
 
-    lines = ["🔌 *Проверка WireGuard*\n"]
+    lines = ["🔌 <b>Проверка WireGuard</b>\n"]
 
     if status.get("last_error") and not status.get("config_found"):
         lines.append("ℹ️ WireGuard недоступен")
-        lines.append(f"   _{status['last_error']}_")
-        lines.append("\n💡 *WireGuard нужен для резервного подключения*")
+        lines.append(f"   <i>{status['last_error']}</i>")
+        lines.append("\n💡 <b>WireGuard нужен для резервного подключения</b>")
         lines.append("   при массовых 504 ошибках от GOST endpoints.")
         lines.append("\n   Для работы WireGuard:")
-        lines.append("   1. Убедитесь что конфиг есть: `wg/TGBOT.conf`")
+        lines.append("   1. Убедитесь что конфиг есть: <code>wg/TGBOT.conf</code>")
         lines.append("   2. Проверьте что WireGuard контейнер запущен в docker-compose")
     else:
         if status["config_found"]:
-            lines.append(f"✅ Конфиг: `{status['config_path']}`")
-            lines.append(f"   Контейнер: `{status.get('container_name', 'wireguard')}`")
-            lines.append(f"   Интерфейс: `{status['interface_name'] or '—'}`")
-            lines.append(f"   IP: `{status['interface_ip'] or '—'}`")
+            lines.append(f"✅ Конфиг: <code>{status['config_path']}</code>")
+            lines.append(f"   Контейнер: <code>{status.get('container_name', 'wireguard')}</code>")
+            lines.append(f"   Интерфейс: <code>{status['interface_name'] or '—'}</code>")
+            lines.append(f"   IP: <code>{status['interface_ip'] or '—'}</code>")
             if status["interface_up"]:
-                lines.append("\n   **Статус: 🟢 Контейнер доступен**")
+                lines.append("\n   <b>Статус: 🟢 Контейнер доступен</b>")
             else:
-                lines.append("\n   **Статус: 🔴 Контейнер недоступен**")
+                lines.append("\n   <b>Статус: 🔴 Контейнер недоступен</b>")
                 if status.get("last_error"):
-                    lines.append(f"   _{status['last_error']}_")
+                    lines.append(f"   <i>{status['last_error']}</i>")
         else:
-            lines.append(f"❌ Конфиг не найден: `{status['config_path']}`")
+            lines.append(f"❌ Конфиг не найден: <code>{status['config_path']}</code>")
             if status.get("last_error"):
-                lines.append(f"   _{status['last_error']}_")
+                lines.append(f"   <i>{status['last_error']}</i>")
 
     text = "\n".join(lines)
     
@@ -974,13 +972,9 @@ async def admin_check_wg(callback: types.CallbackQuery):
     
     back_kb = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     try:
-        await callback.message.edit_text(
-            text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_kb
-        )
+        await callback.message.edit_text(text, reply_markup=back_kb)
     except Exception:
-        await callback.message.answer(
-            text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_kb
-        )
+        await callback.message.answer(text, reply_markup=back_kb)
 
 
 # ------------------------------------------------------------------ #
@@ -1039,21 +1033,19 @@ async def admin_back(callback: types.CallbackQuery, state: FSMContext):
     
     caller_uid = callback.from_user.id
     help_text = (
-        "👨‍💼 *Админ-панель*\n\n"
+        "👨‍💼 <b>Админ-панель</b>\n\n"
         "Используйте кнопки ниже для управления:"
     )
     
     try:
         await callback.message.edit_text(
             help_text,
-            parse_mode=ParseMode.MARKDOWN,
             reply_markup=build_admin_keyboard(caller_uid),
         )
     except Exception as e:
         logger.error(f"Ошибка при редактировании сообщения: {e}")
         await callback.message.answer(
             help_text,
-            parse_mode=ParseMode.MARKDOWN,
             reply_markup=build_admin_keyboard(caller_uid),
         )
     await safe_callback_answer(callback, "")
@@ -1100,9 +1092,9 @@ async def admin_grant_admin(callback: types.CallbackQuery, state: FSMContext):
         return
     
     await state.set_state(AdminStates.grant_admin_waiting)
-    text = "👑 *Выдача роли админа*\n\nВыберите пользователя (введите TG ID или @username):\n\n"
+    text = "👑 <b>Выдача роли админа</b>\n\nВыберите пользователя (введите TG ID или @username):\n\n"
     text += "\n".join(f"• {u}" for u in non_admins)
-    await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+    await callback.message.answer(text)
     await safe_callback_answer(callback, "")
 
 
@@ -1117,8 +1109,8 @@ async def process_grant_admin(message: types.Message, state: FSMContext):
     if nav:
         await state.clear()
         if nav == "admin":
-            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления:"
-            await safe_send_text(message.bot, message.chat.id, help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_admin_keyboard(message.from_user.id))
+            help_text = "👨‍💼 <b>Админ-панель</b>\n\nИспользуйте кнопки ниже для управления:"
+            await safe_send_text(message.bot, message.chat.id, help_text, reply_markup=build_admin_keyboard(message.from_user.id))
         else:
             from handlers.commands import cmd_start
             await cmd_start(message, state)
@@ -1192,9 +1184,9 @@ async def admin_revoke_admin(callback: types.CallbackQuery, state: FSMContext):
         lines.append(f"• {display}")
     
     await state.set_state(AdminStates.revoke_admin_waiting)
-    text = "🚫 *Снятие роли админа*\n\nВыберите админа (введите TG ID или @username):\n\n"
+    text = "🚫 <b>Снятие роли админа</b>\n\nВыберите админа (введите TG ID или @username):\n\n"
     text += "\n".join(lines)
-    await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+    await callback.message.answer(text)
     await safe_callback_answer(callback, "")
 
 
@@ -1209,8 +1201,8 @@ async def process_revoke_admin(message: types.Message, state: FSMContext):
     if nav:
         await state.clear()
         if nav == "admin":
-            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления:"
-            await safe_send_text(message.bot, message.chat.id, help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_admin_keyboard(message.from_user.id))
+            help_text = "👨‍💼 <b>Админ-панель</b>\n\nИспользуйте кнопки ниже для управления:"
+            await safe_send_text(message.bot, message.chat.id, help_text, reply_markup=build_admin_keyboard(message.from_user.id))
         else:
             from handlers.commands import cmd_start
             await cmd_start(message, state)
@@ -1276,30 +1268,30 @@ async def admin_stats_callback(callback: types.CallbackQuery):
         stats = get_stats()
         
         text = (
-            "📊 *Статистика бота*\n\n"
-            f"⏱️ *Время работы:*\n"
+            "📊 <b>Статистика бота</b>\n\n"
+            f"⏱️ <b>Время работы:</b>\n"
             f"• Дней: {stats['uptime_days']}\n"
             f"• Часов: {stats['uptime_hours']}\n"
             f"• Секунд: {stats['uptime_seconds']}\n\n"
-            f"📈 *Использование:*\n"
+            f"📈 <b>Использование:</b>\n"
             f"• Проверено доменов: {stats['total_domains_checked']}\n"
             f"• Уникальных пользователей: {stats['total_users']}\n\n"
         )
         
         if stats['top_domains']:
-            text += "🔝 *Топ доменов:*\n"
+            text += "🔝 <b>Топ доменов:</b>\n"
             for domain, count in list(stats['top_domains'].items())[:5]:
                 text += f"• {domain}: {count}\n"
             text += "\n"
         
         if stats['top_commands']:
-            text += "⚙️ *Топ команд:*\n"
+            text += "⚙️ <b>Топ команд:</b>\n"
             for cmd, count in list(stats['top_commands'].items())[:5]:
                 text += f"• {cmd}: {count}\n"
             text += "\n"
         
         if stats['top_errors']:
-            text += "⚠️ *Топ ошибок:*\n"
+            text += "⚠️ <b>Топ ошибок:</b>\n"
             for error, count in list(stats['top_errors'].items())[:5]:
                 text += f"• {error}: {count}\n"
         
@@ -1307,12 +1299,7 @@ async def admin_stats_callback(callback: types.CallbackQuery):
         
         chat_id = callback.message.chat.id if callback.message else callback.from_user.id
         try:
-            await safe_send_text(
-                bot,
-                chat_id,
-                text,
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await safe_send_text(bot, chat_id, text)
         finally:
             if bot != callback.message.bot if callback.message else callback.bot:
                 await bot.session.close()

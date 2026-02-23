@@ -408,6 +408,39 @@ async def check_permission(message: types.Message, permission: str) -> bool:
     return False
 
 
+async def check_access_callback(
+    callback: types.CallbackQuery,
+    permission: Optional[str] = None,
+) -> bool:
+    """
+    Проверяет доступ (и при необходимости разрешение) для callback query.
+    Если доступа нет — отвечает на callback с алертом и возвращает False.
+
+    Returns:
+        True если доступ есть, False иначе (ответ пользователю уже отправлен).
+    """
+    if not callback.from_user:
+        return False
+    user_id = callback.from_user.id
+
+    if not has_access(user_id):
+        try:
+            await callback.answer("❌ Нет доступа", show_alert=True)
+        except Exception:
+            pass
+        return False
+
+    if permission is not None and not has_permission(user_id, permission):
+        perm_name = PERMISSIONS.get(permission, permission)
+        try:
+            await callback.answer(f"❌ Нет доступа к функции: {perm_name}", show_alert=True)
+        except Exception:
+            pass
+        return False
+
+    return True
+
+
 # ---------- Парсинг списка пользователей ----------
 
 def parse_user_list(text: str) -> List[Tuple[Optional[int], Optional[str], Optional[str]]]:

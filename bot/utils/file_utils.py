@@ -101,7 +101,7 @@ async def async_write_json(file_path: Path, data: Dict[str, Any], indent: int = 
             logger.error(f"Ошибка при записи JSON файла {file_path}: {e}")
             return False
     
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _write)
 
 
@@ -152,7 +152,7 @@ async def async_write_text(file_path: Path, content: str) -> bool:
             logger.error(f"Ошибка при записи текстового файла {file_path}: {e}")
             return False
     
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _write)
 
 

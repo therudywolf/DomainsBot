@@ -6,10 +6,9 @@ import logging
 from datetime import datetime
 
 from aiogram import F, Router, types
-from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 
-from access import has_access, has_permission, check_access, ADMIN_ID, MonitoringStates, is_admin_user
+from access import has_access, has_permission, check_access, check_access_callback, ADMIN_ID, MonitoringStates, is_admin_user
 from keyboards import (
     build_monitoring_keyboard,
     build_monitoring_global_keyboard,
@@ -217,13 +216,7 @@ async def process_monitor_remove(message: types.Message, state: FSMContext):
 async def monitor_list(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
-    if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
-        return
-    
-    # Проверка разрешения на мониторинг
-    if not has_permission(user_id, "monitoring"):
-        await safe_callback_answer(callback, "❌ Нет доступа к мониторингу", show_alert=True)
+    if not await check_access_callback(callback, "monitoring"):
         return
     
     domains = await get_monitored_domains(user_id)
@@ -231,8 +224,8 @@ async def monitor_list(callback: types.CallbackQuery):
     if not domains:
         await callback.message.answer("📋 Нет доменов в мониторинге")
     else:
-        text = "📋 *Домены в мониторинге:*\n\n" + "\n".join(f"• {d}" for d in domains)
-        await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+        text = "📋 <b>Домены в мониторинге:</b>\n\n" + "\n".join(f"• {d}" for d in domains)
+        await callback.message.answer(text)
     
     await safe_callback_answer(callback, "")
 
@@ -242,13 +235,7 @@ async def monitor_export(callback: types.CallbackQuery):
     """Экспортирует список доменов из мониторинга в текстовый файл."""
     user_id = callback.from_user.id
     
-    if not has_access(user_id):
-        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
-        return
-    
-    # Проверка разрешения на мониторинг
-    if not has_permission(user_id, "monitoring"):
-        await safe_callback_answer(callback, "❌ Нет доступа к мониторингу", show_alert=True)
+    if not await check_access_callback(callback, "monitoring"):
         return
     
     domains = await get_monitored_domains(user_id)
@@ -415,16 +402,16 @@ async def monitor_back(callback: types.CallbackQuery):
     interval = await get_monitoring_interval(user_id)
     domains = await get_monitored_domains(user_id)
     text = (
-        f"📊 *Мониторинг доменов*\n\n"
+        f"📊 <b>Мониторинг доменов</b>\n\n"
         f"Статус: {'✅ Включен' if enabled else '❌ Выключен'}\n"
         f"Интервал проверки: {interval} минут\n"
         f"Доменов в мониторинге: {len(domains)}\n\n"
         f"Используйте кнопки ниже для управления:"
     )
     try:
-        await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_monitoring_keyboard(user_id))
+        await callback.message.edit_text(text, reply_markup=build_monitoring_keyboard(user_id))
     except Exception:
-        await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_monitoring_keyboard(user_id))
+        await callback.message.answer(text, reply_markup=build_monitoring_keyboard(user_id))
     await safe_callback_answer(callback, "")
 
 
@@ -441,7 +428,7 @@ async def monitor_switch_global(callback: types.CallbackQuery):
     domains = await get_monitored_domains(0, scope="global")
     chat_id = get_notification_chat_id_global()
     text = (
-        f"🌐 *Глобальная панель мониторинга*\n\n"
+        f"🌐 <b>Глобальная панель мониторинга</b>\n\n"
         f"Статус: {'✅ Включен' if enabled else '❌ Выключен'}\n"
         f"Интервал: {interval} мин\n"
         f"Доменов: {len(domains)}\n"
@@ -449,9 +436,9 @@ async def monitor_switch_global(callback: types.CallbackQuery):
         f"Управление кнопками ниже:"
     )
     try:
-        await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_monitoring_global_keyboard())
+        await callback.message.edit_text(text, reply_markup=build_monitoring_global_keyboard())
     except Exception:
-        await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_monitoring_global_keyboard())
+        await callback.message.answer(text, reply_markup=build_monitoring_global_keyboard())
     await safe_callback_answer(callback, "")
 
 
@@ -463,7 +450,7 @@ async def monitor_global_add(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(MonitoringStates.add_domain_waiting)
     await state.update_data(monitor_scope="global")
     await callback.message.answer(
-        "📝 Введите домен(ы) для добавления в *глобальную* панель мониторинга.\n\n"
+        "📝 Введите домен(ы) для добавления в <b>глобальную</b> панель мониторинга.\n\n"
         "Можно несколько через пробел, запятую или с новой строки."
     )
     await safe_callback_answer(callback, "")
@@ -476,7 +463,7 @@ async def monitor_global_remove(callback: types.CallbackQuery, state: FSMContext
         return
     await state.set_state(MonitoringStates.remove_domain_waiting)
     await state.update_data(monitor_scope="global")
-    await callback.message.answer("🗑️ Введите домен(ы) для удаления из *глобальной* панели мониторинга.")
+    await callback.message.answer("🗑️ Введите домен(ы) для удаления из <b>глобальной</b> панели мониторинга.")
     await safe_callback_answer(callback, "")
 
 
@@ -489,7 +476,7 @@ async def monitor_global_list(callback: types.CallbackQuery):
     if not domains:
         await callback.message.answer("📋 В глобальной панели нет доменов")
     else:
-        await callback.message.answer("📋 *Глобальная панель — домены:*\n\n" + "\n".join(f"• {d}" for d in domains), parse_mode=ParseMode.MARKDOWN)
+        await callback.message.answer("📋 <b>Глобальная панель — домены:</b>\n\n" + "\n".join(f"• {d}" for d in domains))
     await safe_callback_answer(callback, "")
 
 
@@ -710,7 +697,7 @@ async def monitor_admin_panel_action(callback: types.CallbackQuery, state: FSMCo
         if not domains:
             await callback.message.answer(f"📋 В панели {owner_key} нет доменов")
         else:
-            await callback.message.answer("📋 *Домены:*\n\n" + "\n".join(f"• {d}" for d in domains), parse_mode=ParseMode.MARKDOWN)
+            await callback.message.answer("📋 <b>Домены:</b>\n\n" + "\n".join(f"• {d}" for d in domains))
         await safe_callback_answer(callback, "")
         return
     if action == "export":

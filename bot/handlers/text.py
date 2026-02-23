@@ -6,7 +6,6 @@ import re
 from typing import List, Tuple, Optional
 
 from aiogram import F, Router, types
-from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 
 from access import has_access, has_permission, check_access, check_permission, ADMIN_ID, is_admin_user
@@ -23,6 +22,7 @@ from utils.report_formatter import format_csv_report, send_domain_reports
 from utils.telegram_utils import safe_send_text, safe_reply, safe_edit_text, safe_send_document
 from utils.rate_limiter import check_rate_limit, get_remaining_requests
 from utils.stats import record_domain_check, record_error, record_command
+from utils.error_logging import log_error_with_context, format_error_for_user
 from utils.chat_settings import register_chat
 from utils.prefs import get_mode
 from utils.history import add_check_result
@@ -41,7 +41,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         state: Состояние FSM
         raw_text: Текст с доменами для обработки
     """
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
     user_id = message.from_user.id
     
     logger.info(
@@ -58,7 +58,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
         register_chat(user_id, message.chat.id, chat_title, chat_type)
     
     # Логируем начало обработки для отладки
-    processing_start = asyncio.get_event_loop().time()
+    processing_start = asyncio.get_running_loop().time()
     
     # Проверка доступа
     if not await check_access(message):
@@ -132,7 +132,7 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     ]
 
     # ---------- Прогресс-индикатор ----------
-    MIN_EDIT_INTERVAL = 10  # секунд между edit_text (увеличено для снижения нагрузки на API)
+    MIN_EDIT_INTERVAL = 6  # секунд между edit_text (баланс между отзывчивостью и лимитами Telegram API)
     total = len(tasks)
     done = 0
     loop = asyncio.get_running_loop()
@@ -289,8 +289,8 @@ async def _process_domains(message: types.Message, state: FSMContext, raw_text: 
     if bad:
         reports.append("🔸 Игнорированы некорректные строки: " + ", ".join(bad))
 
-    total_duration = asyncio.get_event_loop().time() - start_time
-    processing_duration = asyncio.get_event_loop().time() - processing_start
+    total_duration = asyncio.get_running_loop().time() - start_time
+    processing_duration = asyncio.get_running_loop().time() - processing_start
     logger.info(
         f"✅ Все домены проверены | "
         f"user_id={user_id} | "
@@ -413,11 +413,17 @@ async def handle_document(message: types.Message, state: FSMContext):
         record_command("file_upload")
         
     except Exception as e:
-        logger.error(f"Ошибка при обработке файла от пользователя {user_id}: {e}", exc_info=True)
+        error_id = log_error_with_context(
+            e,
+            user_id=user_id,
+            context={"operation": "file_upload"},
+            level="ERROR",
+        )
         record_error("FILE_PROCESSING_ERROR")
-        await message.reply(
-            f"❌ Ошибка при обработке файла: {type(e).__name__}\n"
-            f"Попробуйте еще раз или обратитесь к администратору."
+        await safe_send_text(
+            message.bot,
+            message.chat.id,
+            format_error_for_user(error_id, "FILE_PROCESSING_ERROR"),
         )
 
 
@@ -432,7 +438,7 @@ async def handle_text(message: types.Message, state: FSMContext):
     
     Также автоматически регистрирует чат, если сообщение пришло из группы/канала.
     """
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
     user_id = message.from_user.id
     text = (message.text or "").strip()
     
@@ -487,9 +493,8 @@ async def handle_text(message: types.Message, state: FSMContext):
             return
         
         await message.answer(
-            "⚙️ *Настройки*\n\n"
+            "⚙️ <b>Настройки</b>\n\n"
             "Выберите параметр для изменения:",
-            parse_mode=ParseMode.MARKDOWN,
             reply_markup=build_settings_keyboard(user_id),
         )
         return
@@ -508,14 +513,13 @@ async def handle_text(message: types.Message, state: FSMContext):
     
     elif text == "👨‍💼 Админ-панель" and is_admin_user(user_id):
         help_text = (
-            "👨‍💼 *Админ-панель*\n\n"
+            "👨‍💼 <b>Админ-панель</b>\n\n"
             "Используйте кнопки ниже для управления доступом:"
         )
         await safe_send_text(
             message.bot,
             message.chat.id,
             help_text,
-            parse_mode=ParseMode.MARKDOWN,
             reply_markup=build_admin_keyboard(user_id),
         )
         return
@@ -545,11 +549,19 @@ async def handle_text(message: types.Message, state: FSMContext):
             )
         except Exception as e:
             duration = asyncio.get_running_loop().time() - start_time
-            logger.error(
-                f"❌ Ошибка при обработке доменов | "
-                f"user_id={user_id} | "
-                f"duration={duration:.2f}s | "
-                f"error={type(e).__name__}: {str(e)}",
-                exc_info=True
+            error_id = log_error_with_context(
+                e,
+                user_id=user_id,
+                context={"operation": "process_domains", "text_preview": text[:200]},
+                level="ERROR",
             )
-            raise
+            record_error("PROCESSING_ERROR")
+            await safe_send_text(
+                message.bot,
+                message.chat.id,
+                format_error_for_user(error_id, "PROCESSING_ERROR"),
+            )
+            logger.info(
+                f"❌ Пользователю отправлено сообщение об ошибке | "
+                f"user_id={user_id} | duration={duration:.2f}s | error_id={error_id}"
+            )
