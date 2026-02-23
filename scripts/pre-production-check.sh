@@ -166,14 +166,15 @@ echo ""
 echo "📚 Проверка документации..."
 echo ""
 
-DOCS=("README.md" "DEPLOYMENT_OFFLINE.md" "QUICKSTART.md")
-for doc in "${DOCS[@]}"; do
-    if [ -f "$doc" ]; then
-        success "$doc существует"
-    else
-        warning "$doc не найден"
-    fi
-done
+if [ -f "README.md" ]; then success "README.md существует"; else warning "README.md не найден"; fi
+if [ -d "docs" ]; then
+    success "docs/ существует"
+    for doc in docs/STARTUP.md docs/API.md; do
+        if [ -f "$doc" ]; then success "  $doc"; else warning "  $doc не найден"; fi
+    done
+else
+    warning "docs/ не найден"
+fi
 
 echo ""
 

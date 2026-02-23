@@ -250,9 +250,8 @@ cmd_export() {
     [ -d wg ] && cp -r wg "$EXPORT_DIR/project/"
     [ -f scripts/deploy.sh ] && cp scripts/deploy.sh "$EXPORT_DIR/project/" && chmod +x "$EXPORT_DIR/project/deploy.sh"
     [ -f manage.sh ] && cp manage.sh "$EXPORT_DIR/project/" && chmod +x "$EXPORT_DIR/project/manage.sh"
-    for doc in README.md CHANGELOG.md DEPLOYMENT_OFFLINE.md QUICKSTART.md; do
-        [ -f "$doc" ] && cp "$doc" "$EXPORT_DIR/project/"
-    done
+    [ -f README.md ] && cp README.md "$EXPORT_DIR/project/"
+    [ -d docs ] && cp -r docs "$EXPORT_DIR/project/"
 
     # clean
     rm -rf "$EXPORT_DIR/project/bot/data" 2>/dev/null || true

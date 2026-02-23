@@ -267,9 +267,8 @@ function Cmd-Export {
     if (Test-Path "wg") { Copy-Item -Recurse "wg" "$ExportDir\project\" }
     if (Test-Path "scripts\deploy.sh") { Copy-Item "scripts\deploy.sh" "$ExportDir\project\" }
     if (Test-Path "manage.sh") { Copy-Item "manage.sh" "$ExportDir\project\" }
-    foreach ($doc in @("README.md","CHANGELOG.md","DEPLOYMENT_OFFLINE.md","QUICKSTART.md")) {
-        if (Test-Path $doc) { Copy-Item $doc "$ExportDir\project\" }
-    }
+    if (Test-Path "README.md") { Copy-Item "README.md" "$ExportDir\project\" }
+    if (Test-Path "docs") { Copy-Item -Recurse "docs" "$ExportDir\project\" }
 
     Get-ChildItem -Path "$ExportDir\project" -Recurse -Directory -Filter "__pycache__" |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue

@@ -1,7 +1,5 @@
-# WireGuard config
+# WireGuard
 
-Образ `masipcat/wireguard-go` ожидает конфиг с именем **wg0.conf**. Положите сюда файл `wg0.conf` с конфигурацией WireGuard. Файл в `.gitignore` и в репозиторий не попадёт.
+Положите сюда конфиг **wg0.conf** (образ `masipcat/wireguard-go` ожидает именно это имя). Файл в `.gitignore` и в репозиторий не попадёт.
 
-Если у вас уже есть конфиг с другим именем (например `TGBOT.conf`), скопируйте или переименуйте его в `wg0.conf`.
-
-Каталог создаётся автоматически скриптами `manage.sh` / `manage.ps1`, если его нет.
+Подробнее: [docs/WIREGUARD_SETUP_CHECKLIST.md](../docs/WIREGUARD_SETUP_CHECKLIST.md).
