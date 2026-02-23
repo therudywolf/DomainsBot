@@ -6,7 +6,10 @@ networks:
 
 services:
   wireguard:
-    image: masipcat/wireguard-go:latest
+    build:
+      context: ./wireguard
+      dockerfile: Dockerfile
+    image: bottgdomains-wireguard:latest
     container_name: wireguard
     restart: unless-stopped
     cap_add:
@@ -21,7 +24,7 @@ services:
       - net.ipv4.ip_forward=1
       # net.ipv4.conf.all.src_valid_mark must be set on the HOST, not in the container
       # (it's a global kernel namespace key, not per-network-namespace)
-    # Образ masipcat/wireguard-go не использует WG_CONFIG; ожидает только /etc/wireguard/wg0.conf
+    # Ожидает /etc/wireguard/wg0.conf (сборка из wireguard/)
     healthcheck:
       test: ["CMD-SHELL", "ip link show TGBOT 2>/dev/null || ip link show wg0 2>/dev/null || exit 1"]
       interval: 30s

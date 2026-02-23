@@ -100,7 +100,13 @@ else
         docker tag "$TGSCANNER_IMAGE" bottgdomains-tgscanner:latest 2>/dev/null || true
         echo "    ✅ Тег для tgscanner создан"
     fi
-    
+
+    WG_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" bottgdomains-wireguard* | head -1)
+    if [ -n "$WG_IMAGE" ]; then
+        docker tag "$WG_IMAGE" bottgdomains-wireguard:latest 2>/dev/null || true
+        echo "    ✅ Тег для wireguard создан"
+    fi
+
     echo ""
 fi
 
@@ -125,7 +131,7 @@ services:
   tgscanner:
     image: bottgdomains-tgscanner:latest
   wireguard:
-    image: masipcat/wireguard-go:latest
+    image: bottgdomains-wireguard:latest
 EOF
 echo "✅ docker-compose.override.yml создан"
 echo ""
