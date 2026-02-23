@@ -216,10 +216,10 @@ async def main():
     from handlers.text import router as text_router
 
     dp.include_router(commands_router)
-    dp.include_router(callbacks_router)
     dp.include_router(admin_router)
     dp.include_router(monitoring_router)
     dp.include_router(inline_router)
+    dp.include_router(callbacks_router)
     dp.include_router(text_router)
 
     dp.message.middleware(LoggingMiddleware())

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _WG_CONTAINER_NAME = os.getenv("WG_CONTAINER_NAME", "wireguard")
 
 # Путь к конфигу WireGuard (для чтения информации, не для управления)
-_WG_CONFIG_PATH = os.getenv("WG_CONFIG_PATH", "wg/TGBOT.conf")
+_WG_CONFIG_PATH = os.getenv("WG_CONFIG_PATH", "wg/wg0.conf")
 
 # Имя интерфейса из конфига (по умолчанию TGBOT)
 _WG_INTERFACE_NAME = "TGBOT"
