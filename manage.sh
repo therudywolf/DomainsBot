@@ -162,16 +162,16 @@ cmd_check() {
     fi
 
     echo ""
-    if [ -f "wg/TGBOT.conf" ]; then
+    if [ -f "wg/wg0.conf" ]; then
         local lines
-        lines=$(wc -l < "wg/TGBOT.conf")
+        lines=$(wc -l < "wg/wg0.conf")
         if [ "$lines" -gt 3 ]; then
             info "WireGuard config found ($lines lines)"
         else
             warn "WireGuard config looks like a placeholder ($lines lines)"
         fi
     else
-        warn "WireGuard config not found (wg/TGBOT.conf)"
+        warn "WireGuard config not found (wg/wg0.conf)"
     fi
 
     echo ""
@@ -194,11 +194,11 @@ cmd_export() {
     local EXPORT_DIR="$PROJECT_ROOT/export"
     local ARCHIVE="bottgdomains-offline-${ts}.tar.gz"
 
-    # 1 — ensure wg config placeholder
+    # 1 — ensure wg config placeholder (образ ожидает wg0.conf)
     _ensure_dirs
-    if [ ! -f "wg/TGBOT.conf" ]; then
-        echo "# Placeholder — replace with real config before use" > wg/TGBOT.conf
-        warn "Created placeholder wg/TGBOT.conf"
+    if [ ! -f "wg/wg0.conf" ]; then
+        echo "# Placeholder — replace with real config before use" > wg/wg0.conf
+        warn "Created placeholder wg/wg0.conf"
     fi
 
     # 2 — build

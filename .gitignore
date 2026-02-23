@@ -54,7 +54,8 @@ data/*.db
 data/*.db.*
 bot/data/
 
-# WireGuard
+# WireGuard (образ masipcat/wireguard-go ожидает wg0.conf)
+wg/wg0.conf
 wg/TGBOT.conf
 
 # Cursor

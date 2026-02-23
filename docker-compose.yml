@@ -19,8 +19,7 @@ services:
       - wg_network
     sysctls:
       - net.ipv4.ip_forward=1
-    environment:
-      - WG_CONFIG=/etc/wireguard/TGBOT.conf
+    # Образ masipcat/wireguard-go не использует WG_CONFIG; ожидает только /etc/wireguard/wg0.conf
     healthcheck:
       test: ["CMD-SHELL", "ip link show TGBOT 2>/dev/null || ip link show wg0 2>/dev/null || exit 1"]
       interval: 30s

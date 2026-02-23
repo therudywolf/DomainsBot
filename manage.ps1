@@ -190,15 +190,15 @@ function Cmd-Check {
     }
 
     Write-Host ""
-    if (Test-Path "wg\TGBOT.conf") {
-        $lines = (Get-Content "wg\TGBOT.conf").Count
+    if (Test-Path "wg\wg0.conf") {
+        $lines = (Get-Content "wg\wg0.conf").Count
         if ($lines -gt 3) {
             Write-Ok "WireGuard config found ($lines lines)"
         } else {
             Write-Warn "WireGuard config looks like a placeholder ($lines lines)"
         }
     } else {
-        Write-Warn "WireGuard config not found (wg\TGBOT.conf)"
+        Write-Warn "WireGuard config not found (wg\wg0.conf)"
     }
 
     Write-Host ""
@@ -221,9 +221,9 @@ function Cmd-Export {
     $ArchiveName = "bottgdomains-offline-$ts"
 
     Ensure-Dirs
-    if (-not (Test-Path "wg\TGBOT.conf")) {
-        Set-Content "wg\TGBOT.conf" "# Placeholder -- replace with real config before use"
-        Write-Warn "Created placeholder wg\TGBOT.conf"
+    if (-not (Test-Path "wg\wg0.conf")) {
+        Set-Content "wg\wg0.conf" "# Placeholder -- replace with real config before use"
+        Write-Warn "Created placeholder wg\wg0.conf"
     }
 
     Write-Step "Building images (no-cache)"
