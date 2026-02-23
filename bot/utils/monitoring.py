@@ -552,7 +552,7 @@ async def _monitoring_loop(bot: Bot) -> None:
                 await asyncio.gather(*tasks, return_exceptions=True)
             
             # Периодическая очистка неактивных пользователей и старых данных
-            await _cleanup_monitoring_data(db)
+            await _cleanup_monitoring_data()
             
             # Ждем перед следующей итерацией
             await asyncio.sleep(60)  # Проверяем каждую минуту
@@ -562,29 +562,27 @@ async def _monitoring_loop(bot: Bot) -> None:
             await asyncio.sleep(60)
 
 
-async def _cleanup_monitoring_data(db: Dict[str, Any]) -> None:
-    """
-    Очищает неактивных пользователей и старые данные из мониторинга.
-    
-    Args:
-        db: База данных мониторинга
-    """
+async def _cleanup_monitoring_data() -> None:
+    """Очищает неактивных пользователей и старые данные из мониторинга."""
     try:
+        async with _monitoring_async_lock:
+            db = await _load_monitoring_db()
+        
         now = datetime.now()
-        max_idle_days = 90  # Удаляем пользователей неактивных более 90 дней
+        max_idle_days = 90
         
         users_to_remove = []
+        modified = False
         
         for user_key, user_data in db.items():
             domains = user_data.get("domains", {})
             
-            # Очищаем старые состояния для каждого домена
             for domain, domain_data in domains.items():
                 state_history = domain_data.get("state_history", [])
                 if len(state_history) > MAX_STATE_HISTORY:
                     domain_data["state_history"] = state_history[-MAX_STATE_HISTORY:]
+                    modified = True
             
-            # Проверяем активность пользователя
             has_recent_activity = False
             for domain_data in domains.values():
                 last_check = domain_data.get("last_check")
@@ -597,17 +595,14 @@ async def _cleanup_monitoring_data(db: Dict[str, Any]) -> None:
                     except Exception:
                         pass
             
-            # Если нет активности и нет доменов, помечаем на удаление
             if not has_recent_activity and not domains:
                 users_to_remove.append(user_key)
         
-        # Удаляем неактивных пользователей
         for user_key in users_to_remove:
             del db[user_key]
             logger.debug(f"Удален неактивный пользователь {user_key} из мониторинга")
         
-        # Сохраняем очищенные данные
-        if users_to_remove:
+        if users_to_remove or modified:
             async with _monitoring_async_lock:
                 await _save_monitoring_db(db)
                 

@@ -255,7 +255,7 @@ async def monitor_export(callback: types.CallbackQuery):
     
     try:
         await callback.message.answer_document(
-            types.FSInputFile(domains_file, filename=domains_file.name),
+            types.BufferedInputFile(domains_text.encode('utf-8'), filename=domains_file.name),
             caption=f"📥 Экспорт доменов из мониторинга ({len(domains)} доменов)"
         )
         await safe_callback_answer(callback, "✅ Список доменов экспортирован")

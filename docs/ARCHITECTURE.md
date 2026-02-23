@@ -6,7 +6,7 @@ BotTGDomains - это асинхронный Telegram бот для провер
 
 ## Компоненты системы
 
-### 1. Telegram Bot (`tg_domain_scanner_final/`)
+### 1. Telegram Bot (`bot/`)
 
 **Основной модуль:** `bot.py`
 
@@ -24,7 +24,7 @@ BotTGDomains - это асинхронный Telegram бот для провер
 
 ---
 
-### 2. Утилиты (`tg_domain_scanner_final/utils/`)
+### 2. Утилиты (`bot/utils/`)
 
 #### `dns_utils.py`
 Получение DNS записей (A, AAAA, MX, NS).
@@ -42,7 +42,7 @@ BotTGDomains - это асинхронный Telegram бот для провер
 
 **Зависимости:**
 - `aiohttp` для HTTP запросов
-- Внешний сервис `GostSSLCheck` для проверки GOST
+- Внешний сервис `gost` для проверки GOST
 
 #### `waf_utils.py`
 Проверка наличия WAF (Web Application Firewall).
@@ -170,7 +170,7 @@ Async-safe операции с файлами.
 
 ---
 
-### 3. Gost SSL Check Service (`GostSSLCheck/`)
+### 3. Gost SSL Check Service (`gost/`)
 
 **Компоненты:**
 - `server.py` - HTTP сервер для проверки GOST сертификатов
@@ -368,7 +368,7 @@ Async-safe операции с файлами.
 ### Системные требования
 - Python 3.10+
 - Docker и Docker Compose
-- OpenSSL с gost-engine (в контейнере GostSSLCheck)
+- OpenSSL с gost-engine (в контейнере gost)
 
 ---
 

@@ -26,7 +26,7 @@ class DNSInfo(TypedDict, total=False):
     AAAA: List[str]
     MX: List[str]
     NS: List[str]
-    IP: str  # Основной IP адрес
+    IP: List[str]  # IP адреса
 
 
 class SSLInfo(TypedDict, total=False):

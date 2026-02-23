@@ -40,7 +40,7 @@ async def _fetch(session: aiohttp.ClientSession, url: str, timeout: int):
     Returns:
         Кортеж (статус, длина_тела)
     """
-    async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout), allow_redirects=True) as resp:
         try:
             body = await resp.text()
         except Exception:
@@ -76,7 +76,7 @@ async def _test_waf_policy(domain: str, timeout: int = 6) -> bool:
                     if status in BLOCK_CODES or status != base_status:
                         logger.debug(f"WAF обнаружен для {domain}: статус изменился {base_status} -> {status}")
                         return True
-                    if abs(length - base_len) > base_len * 0.5:
+                    if base_len > 0 and abs(length - base_len) > base_len * 0.5:
                         logger.debug(f"WAF обнаружен для {domain}: размер ответа изменился значительно")
                         return True
                 except Exception as e:

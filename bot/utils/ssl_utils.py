@@ -435,8 +435,11 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
 
     try:
         ssl_obj = writer.get_extra_info("ssl_object")
+        if ssl_obj is None:
+            return cert_info
         cert_bin = ssl_obj.getpeercert(True)
-        negotiated_cipher = ssl_obj.cipher()[0] if ssl_obj.cipher() else None
+        cipher_info = ssl_obj.cipher()
+        negotiated_cipher = cipher_info[0] if cipher_info else None
 
         cert = x509.load_der_x509_certificate(cert_bin, default_backend())
         
@@ -460,7 +463,7 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
             cert_info["NotAfter"] = cert.not_valid_after.replace(tzinfo=timezone.utc)
 
         cert_info["Issuer"] = cert.issuer.rfc4514_string()
-        cert_info["SigAlg"] = cert.signature_algorithm_oid._name if hasattr(cert.signature_algorithm_oid, '_name') else str(cert.signature_algorithm_oid)
+        cert_info["SigAlg"] = str(cert.signature_algorithm_oid.dotted_string) if hasattr(cert.signature_algorithm_oid, 'dotted_string') else str(cert.signature_algorithm_oid)
         cert_info["Cipher"] = negotiated_cipher
         
         # Определяем GOST

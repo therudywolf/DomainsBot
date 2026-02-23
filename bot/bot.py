@@ -110,8 +110,7 @@ class LoggingMiddleware:
                 loop = asyncio.get_running_loop()
                 duration = loop.time() - start_time
             except RuntimeError:
-                from datetime import datetime as _dt
-                duration = (_dt.now().timestamp() - start_time) if isinstance(start_time, float) else 0.0
+                duration = 0.0
             logger.error(
                 f"❌ Ошибка в обработчике | event={event_type} | "
                 f"duration={duration:.3f}s | error={type(e).__name__}: {e}",
@@ -137,7 +136,8 @@ async def setup_bot_commands(bot: Bot) -> None:
     ]
     try:
         await bot.set_my_commands(commands)
-        await bot.set_my_commands(admin_commands, scope=types.BotCommandScopeDefault())
+        from access import ADMIN_ID as _admin_id
+        await bot.set_my_commands(admin_commands, scope=types.BotCommandScopeChat(chat_id=_admin_id))
         logger.info("Команды бота установлены")
     except Exception as e:
         logger.error(f"Ошибка при установке команд бота: {e}")
@@ -152,7 +152,8 @@ def setup_signal_handlers(bot: Bot, dp: Dispatcher) -> None:
         _shutdown_event.set()
 
     signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, signal_handler)
 
 
 # ---------- Resource cleanup ----------
@@ -220,6 +221,9 @@ async def main():
     dp.include_router(monitoring_router)
     dp.include_router(inline_router)
     dp.include_router(text_router)
+
+    dp.message.middleware(LoggingMiddleware())
+    dp.callback_query.middleware(LoggingMiddleware())
 
     logger.info("Все роутеры зарегистрированы")
 

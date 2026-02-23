@@ -385,7 +385,7 @@ async def cmd_export_history(message: types.Message, state: FSMContext):
     
     try:
         await message.answer_document(
-            types.FSInputFile(csv_file, filename=csv_file.name),
+            types.BufferedInputFile(csv_data, filename=csv_file.name),
             caption=f"📊 Экспорт истории проверок ({len(history)} записей)"
         )
         record_command("export_history")

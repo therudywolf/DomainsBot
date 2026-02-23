@@ -43,17 +43,18 @@ _cache_stats = {
 }
 
 
-def _make_key(args, kwargs) -> str:
-    """Создает ключ кэша из аргументов функции.
+def _make_key(func_name: str, args, kwargs) -> str:
+    """Создает ключ кэша из имени функции и аргументов.
     
     Args:
+        func_name: Имя функции
         args: Позиционные аргументы
         kwargs: Именованные аргументы
         
     Returns:
         Строковое представление ключа
     """
-    return repr((args, tuple(sorted(kwargs.items()))))
+    return repr((func_name, args, tuple(sorted(kwargs.items()))))
 
 
 def _get_from_memory_cache(key: str, now: float) -> Optional[Any]:
@@ -200,7 +201,7 @@ def ttl_cache(ttl: int = TTL_SECONDS, maxsize: int = MAXSIZE):
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            key = _make_key(args, kwargs)
+            key = _make_key(func.__qualname__, args, kwargs)
             now = time.time()
             
             # Сначала проверяем in-memory кэш

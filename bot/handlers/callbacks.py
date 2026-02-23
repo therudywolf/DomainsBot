@@ -8,6 +8,7 @@
 
 import asyncio
 import csv
+import io
 import json
 import logging
 import re
@@ -115,7 +116,7 @@ async def safe_callback_answer(
 @router.callback_query(F.data.in_({"mode_full", "mode_brief"}))
 async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
     """Переключает режим отчета (расширенный/короткий)."""
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
     user_id = callback.from_user.id
     callback_data = callback.data
     
@@ -194,7 +195,7 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
         if domain:
             logger.info(f"Обновление отчета для домена {domain} с режимом {new_mode}")
             try:
-                await _recheck_domain(callback.message, state, domain, new_mode)
+                await _recheck_domain(callback.message, state, domain, new_mode, requester_id=user_id)
                 duration = asyncio.get_running_loop().time() - start_time
                 logger.info(f"✅ Отчет обновлен для {domain} за {duration:.2f}s")
             except Exception as e:
@@ -268,7 +269,8 @@ async def _recheck_domain(
     message: types.Message,
     state: FSMContext,
     domain: str,
-    mode: Optional[str] = None
+    mode: Optional[str] = None,
+    requester_id: Optional[int] = None,
 ) -> None:
     """
     Перепроверяет один домен и обновляет отчет.
@@ -278,9 +280,10 @@ async def _recheck_domain(
         state: Состояние FSM
         domain: Домен для перепроверки
         mode: Режим отчета (если None, берется из state)
+        requester_id: ID пользователя, запросившего перепроверку
     """
-    start_time = asyncio.get_event_loop().time()
-    user_id = message.from_user.id
+    start_time = asyncio.get_running_loop().time()
+    user_id = requester_id or (message.from_user.id if message.from_user else 0)
     
     logger.info(
         f"🔄 Перепроверка домена | "
@@ -301,7 +304,7 @@ async def _recheck_domain(
         await safe_edit_text(message, "⏳ Перепроверяю домен...", parse_mode=ParseMode.HTML)
         
         # Получаем данные
-        check_start = asyncio.get_event_loop().time()
+        check_start = asyncio.get_running_loop().time()
         logger.debug(f"Начало проверки домена {domain}")
         
         dns_info, ssl_info, waf_result = await asyncio.gather(
@@ -311,7 +314,7 @@ async def _recheck_domain(
             return_exceptions=True
         )
         
-        check_duration = asyncio.get_event_loop().time() - check_start
+        check_duration = asyncio.get_running_loop().time() - check_start
         logger.info(
             f"✅ Проверка домена завершена | "
             f"domain={domain} | "
@@ -373,7 +376,7 @@ async def _recheck_domain(
             reply_markup=keyboard,
         )
         
-        total_duration = asyncio.get_event_loop().time() - start_time
+        total_duration = asyncio.get_running_loop().time() - start_time
         logger.info(
             f"✅ Отчет обновлен | "
             f"domain={domain} | "
@@ -399,7 +402,7 @@ async def _recheck_domain(
             record_domain_check(domain, user_id)
             
     except Exception as e:
-        duration = asyncio.get_event_loop().time() - start_time
+        duration = asyncio.get_running_loop().time() - start_time
         logger.error(
             f"❌ Критическая ошибка при перепроверке домена | "
             f"domain={domain} | "
@@ -420,7 +423,7 @@ async def _recheck_domain(
 @router.callback_query(F.data.startswith("recheck_"))
 async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
     """Быстрая перепроверка домена."""
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
     user_id = callback.from_user.id
     
     logger.info(
@@ -446,8 +449,8 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
     await safe_callback_answer(callback, "🔄 Перепроверяю домен...")
     
     try:
-        await _recheck_domain(callback.message, state, domain)
-        duration = asyncio.get_event_loop().time() - start_time
+        await _recheck_domain(callback.message, state, domain, requester_id=user_id)
+        duration = asyncio.get_running_loop().time() - start_time
         logger.info(
             f"✅ Перепроверка завершена | "
             f"domain={domain} | "
@@ -455,7 +458,7 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
             f"duration={duration:.2f}s"
         )
     except Exception as e:
-        duration = asyncio.get_event_loop().time() - start_time
+        duration = asyncio.get_running_loop().time() - start_time
         logger.error(
             f"❌ Ошибка при перепроверке | "
             f"domain={domain} | "
@@ -908,13 +911,12 @@ async def stats_export_json(callback: types.CallbackQuery):
         from utils.stats import get_stats
         stats = get_stats()
         
-        import io
         json_data = json.dumps(stats, ensure_ascii=False, indent=2, default=str)
         json_file = io.BytesIO(json_data.encode('utf-8'))
         json_file.name = f"stats_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         
         await callback.message.answer_document(
-            types.FSInputFile(json_file, filename=json_file.name),
+            types.BufferedInputFile(json_data.encode('utf-8'), filename=json_file.name),
             caption="📥 Экспорт статистики в JSON"
         )
         await safe_callback_answer(callback, "✅ Статистика экспортирована в JSON")
@@ -936,7 +938,6 @@ async def stats_export_csv(callback: types.CallbackQuery):
         from utils.stats import get_stats
         stats = get_stats()
         
-        import io
         output = io.StringIO()
         writer = csv.writer(output)
         
@@ -976,7 +977,7 @@ async def stats_export_csv(callback: types.CallbackQuery):
         csv_file.name = f"stats_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         
         await callback.message.answer_document(
-            types.FSInputFile(csv_file, filename=csv_file.name),
+            types.BufferedInputFile(csv_data, filename=csv_file.name),
             caption="📊 Экспорт статистики в CSV"
         )
         await safe_callback_answer(callback, "✅ Статистика экспортирована в CSV")
@@ -1221,12 +1222,13 @@ async def process_chat_id(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     text = (message.text or "").strip()
     
-    if not text.isdigit():
+    try:
+        chat_id = int(text)
+    except ValueError:
         await message.answer("❌ Неверный формат ID. Отправьте число.")
         return
     
     try:
-        chat_id = int(text)
         set_notification_chat_id(user_id, chat_id)
         
         # Регистрируем чат

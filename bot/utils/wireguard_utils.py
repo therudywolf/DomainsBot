@@ -48,7 +48,7 @@ def _get_wg_config_path() -> Path:
     search_paths = []
     
     # 1. Относительно корня репозитория (для разработки на хосте)
-    # Модуль находится в tg_domain_scanner_final/utils/, корень на 2 уровня выше
+    # Модуль находится в bot/utils/, корень на 2 уровня выше
     repo_root = Path(__file__).resolve().parent.parent.parent
     search_paths.append(repo_root / config_path)
     

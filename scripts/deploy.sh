@@ -143,9 +143,9 @@ echo ""
 
 # Проверка .env
 echo "⚙️  Шаг 3: Проверка конфигурации..."
-if [ ! -f "tg_domain_scanner_final/.env" ]; then
-    if [ -f "tg_domain_scanner_final/.env.example" ]; then
-        cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        cp .env.example .env
         echo "  ✅ Файл .env создан из примера. ОТРЕДАКТИРУЙТЕ ЕГО!"
         read -p "  Нажмите Enter после редактирования .env файла..."
     else

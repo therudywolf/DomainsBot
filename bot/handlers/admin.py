@@ -515,14 +515,15 @@ async def toggle_permission(callback: types.CallbackQuery):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
-    parts = callback.data.split("_")
-    if len(parts) != 4:
+    payload = callback.data.removeprefix("perm_toggle_")
+    sep = payload.find("_")
+    if sep == -1:
         await safe_callback_answer(callback, "❌ Ошибка формата", show_alert=True)
         return
     
     try:
-        user_id = int(parts[2])
-        permission = parts[3]
+        user_id = int(payload[:sep])
+        permission = payload[sep + 1:]
     except (ValueError, IndexError):
         await safe_callback_answer(callback, "❌ Ошибка парсинга", show_alert=True)
         return
@@ -638,12 +639,7 @@ async def mass_perm_add(callback: types.CallbackQuery):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
-    parts = callback.data.split("_")
-    if len(parts) != 4:
-        await safe_callback_answer(callback, "❌ Ошибка формата", show_alert=True)
-        return
-    
-    permission = parts[3]
+    permission = callback.data.removeprefix("mass_perm_add_")
     if permission not in PERMISSIONS:
         await safe_callback_answer(callback, "❌ Неизвестное разрешение", show_alert=True)
         return
@@ -718,12 +714,7 @@ async def mass_perm_remove(callback: types.CallbackQuery):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
-    parts = callback.data.split("_")
-    if len(parts) != 4:
-        await safe_callback_answer(callback, "❌ Ошибка формата", show_alert=True)
-        return
-    
-    permission = parts[3]
+    permission = callback.data.removeprefix("mass_perm_remove_")
     if permission not in PERMISSIONS:
         await safe_callback_answer(callback, "❌ Неизвестное разрешение", show_alert=True)
         return

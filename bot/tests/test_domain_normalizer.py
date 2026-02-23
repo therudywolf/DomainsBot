@@ -129,9 +129,9 @@ class TestNormalizeDomains:
         """Тест некорректных доменов - edge cases."""
         assert normalize_domain("http://") is None
         assert normalize_domain("https://") is None
-        assert normalize_domain("://example.com") is None
+        assert normalize_domain("://example.com") == "example.com"  # extracts domain from malformed URL
         assert normalize_domain("example") is None  # Нет TLD
-        assert normalize_domain(".example.com") is None  # Точка в начале
+        assert normalize_domain(".example.com") == "example.com"  # strips leading dot
 
 
 

@@ -29,7 +29,7 @@ cd BotTGDomains
 
 ### 2. Создание файла `.env`
 
-Создайте файл `.env` (для Docker: `tg_domain_scanner_final/.env`):
+Создайте файл `.env` в корне проекта:
 
 ```env
 # Обязательные параметры
@@ -80,8 +80,8 @@ MAX_FILE_SIZE_MB=10
 
 ```bash
 mkdir -p data
-cp tg_domain_scanner_final/.env.example tg_domain_scanner_final/.env
-# Отредактируйте tg_domain_scanner_final/.env и укажите TG_TOKEN и ADMIN_ID
+cp .env.example .env
+# Отредактируйте .env и укажите TG_TOKEN и ADMIN_ID
 ```
 
 #### Шаг 2: Запуск сервисов
@@ -118,7 +118,7 @@ docker-compose logs -f gostsslcheck
 #### Шаг 1: Установка зависимостей
 
 ```bash
-cd tg_domain_scanner_final
+cd bot
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # или
@@ -143,7 +143,7 @@ mkdir -p data logs
 python bot.py
 ```
 
-**Примечание:** Для проверки GOST сертификатов необходимо также запустить сервисы `GostSSLCheck` через Docker Compose.
+**Примечание:** Для проверки GOST сертификатов необходимо также запустить сервисы `gost` через Docker Compose.
 
 ---
 

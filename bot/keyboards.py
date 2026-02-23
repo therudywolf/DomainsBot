@@ -126,16 +126,12 @@ def build_main_menu_keyboard(user_id: int) -> types.ReplyKeyboardMarkup:
         if keyboard and len(keyboard[-1]) < 2:
             keyboard[-1].append(types.KeyboardButton(text="⚙️ Настройки"))
         else:
-            if not keyboard:
-                keyboard.append([])
             keyboard.append([types.KeyboardButton(text="⚙️ Настройки")])
     
     if has_access(user_id) and has_permission(user_id, "history"):
         if keyboard and len(keyboard[-1]) < 2:
             keyboard[-1].append(types.KeyboardButton(text="📋 История"))
         else:
-            if not keyboard:
-                keyboard.append([])
             keyboard.append([types.KeyboardButton(text="📋 История")])
     
     if user_id == ADMIN_ID:

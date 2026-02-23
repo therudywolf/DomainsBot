@@ -5,12 +5,14 @@
 эмодзи, блоков и цветового кодирования для лучшего восприятия.
 """
 
+import logging
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
 
-# Импорт для создания клавиатур (ленивый импорт в функции)
 if TYPE_CHECKING:
     from aiogram import types
+
+logger = logging.getLogger(__name__)
 
 
 def _shorten_san(san: List[str], max_items: int = 5) -> str:
@@ -156,13 +158,9 @@ def build_report(
     """
     # Защита от неправильных типов данных
     if not isinstance(ssl, dict):
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"ssl должен быть словарем, получен {type(ssl)} для домена {domain}")
         ssl = {}
     if not isinstance(dns, dict):
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"dns должен быть словарем, получен {type(dns)} для домена {domain}")
         dns = {}
     

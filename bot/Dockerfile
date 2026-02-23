@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 # Устанавливаем необходимые зависимости
-# Проверка GOST выполняется через отдельные контейнеры GostSSLCheck
+# Проверка GOST выполняется через отдельные контейнеры gost
 # WireGuard теперь работает в отдельном контейнере
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Копируем и устанавливаем зависимости Python
-COPY tg_domain_scanner_final/requirements.txt .
+COPY bot/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем код приложения
-COPY tg_domain_scanner_final/ .
+COPY bot/ .
 
 # Создаем директории для данных
 RUN mkdir -p data

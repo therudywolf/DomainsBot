@@ -29,7 +29,7 @@ services:
       start_period: 15s
 
   gostsslcheck1:
-    build: ./GostSSLCheck
+    build: ./gost
     container_name: gostsslcheck1
     restart: unless-stopped
     networks:
@@ -42,7 +42,7 @@ services:
       start_period: 10s
 
   gostsslcheck2:
-    build: ./GostSSLCheck
+    build: ./gost
     container_name: gostsslcheck2
     restart: unless-stopped
     networks:
@@ -55,7 +55,7 @@ services:
       start_period: 10s
 
   gostsslcheck3:
-    build: ./GostSSLCheck
+    build: ./gost
     container_name: gostsslcheck3
     restart: unless-stopped
     networks:
@@ -70,7 +70,7 @@ services:
   tgscanner:
     build:
       context: .
-      dockerfile: tg_domain_scanner_final/Dockerfile
+      dockerfile: bot/Dockerfile
     container_name: tgscanner
     restart: unless-stopped
     depends_on:
@@ -82,7 +82,7 @@ services:
         condition: service_healthy
       gostsslcheck3:
         condition: service_healthy
-    env_file: tg_domain_scanner_final/.env
+    env_file: ./.env
     environment:
       - GOSTSSL_HOSTS=gostsslcheck1,gostsslcheck2,gostsslcheck3
       - WG_CONTAINER_NAME=wireguard

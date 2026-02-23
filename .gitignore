@@ -6,6 +6,7 @@ bottgdomains-offline-*.sha256
 *.tar.gz
 *.tar
 *.zip
+*.sha256
 
 # Python
 __pycache__/
@@ -50,6 +51,8 @@ Thumbs.db
 # Data
 data/*.json
 data/*.db
+data/*.db.*
+bot/data/
 
 # WireGuard
 wg/TGBOT.conf

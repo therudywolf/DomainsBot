@@ -62,10 +62,14 @@ async def fetch_dns(domain: str, timeout: int = 5) -> Dict[str, List[str]]:
     
     res: Dict[str, List[str]] = {k: [] for k in ("A", "AAAA", "MX", "NS", "IP", "TXT", "CAA", "SOA")}
     
-    for rt in ("A", "AAAA", "MX", "NS", "TXT", "CAA"):
-        res[rt] = await _query(resolver, domain, rt)
+    record_types = ("A", "AAAA", "MX", "NS", "TXT", "CAA")
+    results = await asyncio.gather(
+        *[_query(resolver, domain, rt) for rt in record_types],
+        return_exceptions=True,
+    )
+    for rt, result in zip(record_types, results):
+        res[rt] = result if isinstance(result, list) else []
     
-    # SOA — single record, still stored as list for uniformity
     try:
         soa_answer = await resolver.resolve(domain, "SOA")
         for rr in soa_answer:
@@ -84,7 +88,7 @@ async def fetch_dns(domain: str, timeout: int = 5) -> Dict[str, List[str]]:
         for ip in socket_ips:
             if ip not in res["IP"]:
                 res["IP"].append(ip)
-    except (asyncio.TimeoutError, Exception) as e:
+    except Exception as e:
         logger.debug(f"socket.gethostbyname_ex для {domain} не удался: {e}")
     
     return res

@@ -6,9 +6,10 @@
 """
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 @dataclass
@@ -57,13 +58,14 @@ class Settings:
     CACHE_TTL_SECONDS: int = 3600  # Время жизни кэша в секундах (1 час)
 
 
-def _get_env_int(key: str, default: int) -> int:
-    """Получает целое число из переменной окружения."""
+def _get_env_int(key: str, default: int, minimum: int = 0) -> int:
+    """Получает целое число из переменной окружения с валидацией минимума."""
     value = os.getenv(key)
     if value is None:
         return default
     try:
-        return int(value)
+        parsed = int(value)
+        return max(parsed, minimum)
     except ValueError:
         return default
 
@@ -89,14 +91,14 @@ def _get_env_bool(key: str, default: bool) -> bool:
 
 settings = Settings(
     TG_TOKEN=os.getenv("TG_TOKEN", ""),
-    DNS_TIMEOUT=_get_env_int("DNS_TIMEOUT", 5),
-    HTTP_TIMEOUT=_get_env_int("HTTP_TIMEOUT", 6),
-    CONCURRENCY=_get_env_int("CONCURRENCY", 20),
-    GOST_CHECK_TIMEOUT=_get_env_int("GOST_CHECK_TIMEOUT", 15),
-    GOST_RETRY_ATTEMPTS=_get_env_int("GOST_RETRY_ATTEMPTS", 3),
+    DNS_TIMEOUT=_get_env_int("DNS_TIMEOUT", 5, minimum=1),
+    HTTP_TIMEOUT=_get_env_int("HTTP_TIMEOUT", 6, minimum=1),
+    CONCURRENCY=_get_env_int("CONCURRENCY", 20, minimum=1),
+    GOST_CHECK_TIMEOUT=_get_env_int("GOST_CHECK_TIMEOUT", 15, minimum=1),
+    GOST_RETRY_ATTEMPTS=_get_env_int("GOST_RETRY_ATTEMPTS", 3, minimum=1),
     GOST_RETRY_DELAY=_get_env_float("GOST_RETRY_DELAY", 0.5),
-    RATE_LIMIT_REQUESTS=_get_env_int("RATE_LIMIT_REQUESTS", 30),
-    RATE_LIMIT_WINDOW=_get_env_int("RATE_LIMIT_WINDOW", 60),
+    RATE_LIMIT_REQUESTS=_get_env_int("RATE_LIMIT_REQUESTS", 30, minimum=1),
+    RATE_LIMIT_WINDOW=_get_env_int("RATE_LIMIT_WINDOW", 60, minimum=1),
     LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
     LOG_FILE=os.getenv("LOG_FILE", "data/bot.log"),
     LOG_MAX_BYTES=_get_env_int("LOG_MAX_BYTES", 10 * 1024 * 1024),

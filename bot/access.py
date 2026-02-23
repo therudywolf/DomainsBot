@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -25,7 +26,11 @@ _admin_id = os.getenv("ADMIN_ID")
 if not _admin_id:
     print("Ошибка: ADMIN_ID не задан. Установите переменную окружения ADMIN_ID.", file=sys.stderr)
     sys.exit(1)
-ADMIN_ID = int(_admin_id)
+try:
+    ADMIN_ID = int(_admin_id)
+except ValueError:
+    print(f"Ошибка: ADMIN_ID должен быть числом, получено: '{_admin_id}'", file=sys.stderr)
+    sys.exit(1)
 
 REQUEST_ACCESS_URL = os.getenv("REQUEST_ACCESS_URL", "")
 
@@ -55,6 +60,9 @@ DEFAULT_PERMISSIONS = {
 
 # ---------- Функции работы с БД доступа ----------
 
+_access_db_lock = threading.Lock()
+
+
 def load_access_db() -> dict:
     """Загружает БД доступа из JSON файла."""
     if ACCESS_DB_FILE.exists():
@@ -74,8 +82,9 @@ def load_access_db() -> dict:
 def save_access_db(data: dict) -> None:
     """Сохраняет БД доступа в JSON файл."""
     try:
-        with open(ACCESS_DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with _access_db_lock:
+            with open(ACCESS_DB_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Ошибка при сохранении БД: {e}")
 
@@ -283,6 +292,8 @@ async def get_bot_username(bot: Bot) -> str:
 
 async def check_access(message: types.Message) -> bool:
     """Проверяет доступ пользователя. Если нет доступа - отправляет сообщение."""
+    if not message.from_user:
+        return False
     if has_access(message.from_user.id):
         return True
     
@@ -306,6 +317,8 @@ async def check_permission(message: types.Message, permission: str) -> bool:
     Returns:
         True если разрешение есть
     """
+    if not message.from_user:
+        return False
     user_id = message.from_user.id
     
     if has_permission(user_id, permission):

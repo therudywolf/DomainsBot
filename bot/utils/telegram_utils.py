@@ -92,8 +92,6 @@ async def safe_send_text(
                 f"Ошибка при отправке сообщения в чат {chat_id}: {e}",
                 exc_info=True
             )
-            # Пробуем отправить следующую часть, но логируем ошибку
-            raise
 
 
 async def safe_reply(

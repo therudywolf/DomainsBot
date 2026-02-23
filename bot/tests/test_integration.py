@@ -4,15 +4,32 @@
 Тестирует взаимодействие компонентов и обработчиков команд.
 """
 
+import os
+import sys
+from unittest.mock import MagicMock, patch
+
+os.environ.setdefault("ADMIN_ID", "999999999")
+os.environ.setdefault("TG_TOKEN", "fake:token")
+
+# Stub aiogram before any project import tries to pull it in
+for mod_name in (
+    "aiogram", "aiogram.types", "aiogram.enums", "aiogram.fsm",
+    "aiogram.fsm.state", "aiogram.fsm.context", "aiogram.client",
+    "aiogram.client.default", "aiogram.exceptions", "aiogram.filters",
+):
+    if mod_name not in sys.modules:
+        sys.modules[mod_name] = MagicMock()
+
+# Provide minimal stubs so State / StatesGroup do not crash
+_state_mod = sys.modules["aiogram.fsm.state"]
+_state_mod.State = type("State", (), {"__init__": lambda self, *a, **kw: None})
+_state_mod.StatesGroup = type("StatesGroup", (), {})
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from aiogram import Bot
-from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, User, Chat
+import asyncio
 
 from utils.domain_processor import validate_and_normalize_domains, check_single_domain
 from utils.report_formatter import format_csv_report
-import asyncio
 
 
 class TestDomainProcessing:
@@ -26,7 +43,6 @@ class TestDomainProcessing:
         
         assert "example.com" in domains
         assert "test.ru" in domains
-        # "invalid" and "domain" are separate tokens after split, both are bad
         assert len(bad) >= 1
     
     @pytest.mark.asyncio
@@ -65,16 +81,13 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_graceful_degradation_dns_error(self):
         """Тест graceful degradation при ошибке DNS."""
-        # Мокаем fetch_dns чтобы он выбрасывал исключение
         with patch('utils.domain_processor.fetch_dns', side_effect=Exception("DNS error")):
             semaphore = asyncio.Semaphore(10)
             
-            # Функция должна обработать ошибку и вернуть частичный результат
             line, row = await check_single_domain("example.com", 123, semaphore, brief=False)
             
             assert line is not None
             assert row is not None
-            # Домен должен быть в результате даже при ошибке
             assert row[0] == "example.com"
     
     @pytest.mark.asyncio
@@ -122,21 +135,14 @@ class TestAccessControl:
     
     def test_has_access_admin(self):
         """Тест доступа администратора."""
-        from bot import has_access, ADMIN_ID
+        from access import has_access, ADMIN_ID
         
-        # Админ всегда имеет доступ
         assert has_access(ADMIN_ID) is True
     
     def test_has_permission_admin(self):
         """Тест разрешений администратора."""
-        from bot import has_permission, ADMIN_ID
+        from access import has_permission, ADMIN_ID
         
-        # Админ имеет все разрешения
         assert has_permission(ADMIN_ID, "check_domains") is True
         assert has_permission(ADMIN_ID, "monitoring") is True
         assert has_permission(ADMIN_ID, "history") is True
-
-
-
-
-

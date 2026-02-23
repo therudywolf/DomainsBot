@@ -44,11 +44,11 @@ cd "$PROJECT_ROOT"
 echo "📋 Проверка безопасности..."
 echo ""
 
-ENV_FILE="tg_domain_scanner_final/.env"
-ENV_EXAMPLE="tg_domain_scanner_final/.env.example"
+ENV_FILE=".env"
+ENV_EXAMPLE=".env.example"
 
 # Проверка, что .env не закоммичен в git
-if git ls-files | grep -q "^tg_domain_scanner_final/\.env$"; then
+if git ls-files | grep -q "^\.env$"; then
     error ".env файл закоммичен в git! Это критическая проблема безопасности!"
 else
     success ".env файл не закоммичен в git"
@@ -81,13 +81,13 @@ echo ""
 echo "📦 Проверка зависимостей..."
 echo ""
 
-if [ ! -f "tg_domain_scanner_final/requirements.txt" ]; then
+if [ ! -f "bot/requirements.txt" ]; then
     error "requirements.txt не найден"
 else
     success "requirements.txt существует"
     
     # Проверка на wildcard зависимости без ограничений
-    if grep -q "^[^#]*==\*$" "tg_domain_scanner_final/requirements.txt"; then
+    if grep -q "^[^#]*==\*$" "bot/requirements.txt"; then
         warning "Найдены зависимости с wildcard версиями без ограничений"
     else
         success "Все зависимости имеют ограничения версий"
@@ -120,16 +120,16 @@ else
     fi
 fi
 
-if [ ! -f "tg_domain_scanner_final/Dockerfile" ]; then
+if [ ! -f "bot/Dockerfile" ]; then
     error "Dockerfile для бота не найден"
 else
     success "Dockerfile для бота существует"
 fi
 
-if [ ! -f "GostSSLCheck/Dockerfile" ]; then
-    error "Dockerfile для GostSSLCheck не найден"
+if [ ! -f "gost/Dockerfile" ]; then
+    error "Dockerfile для gost не найден"
 else
-    success "Dockerfile для GostSSLCheck существует"
+    success "Dockerfile для gost существует"
 fi
 
 echo ""
@@ -149,10 +149,15 @@ else
     fi
 fi
 
-if [ ! -f "scripts/build-and-export.sh" ]; then
-    warning "scripts/build-and-export.sh не найден"
+if [ -f "manage.sh" ]; then
+    success "manage.sh существует"
+    if [ -x "manage.sh" ]; then
+        success "manage.sh исполняемый"
+    else
+        warning "manage.sh не имеет прав на выполнение (chmod +x)"
+    fi
 else
-    success "scripts/build-and-export.sh существует"
+    warning "manage.sh не найден"
 fi
 
 echo ""
@@ -200,8 +205,8 @@ echo ""
 echo "🧪 Проверка тестов..."
 echo ""
 
-if [ -d "tg_domain_scanner_final/tests" ]; then
-    TEST_COUNT=$(find "tg_domain_scanner_final/tests" -name "test_*.py" | wc -l)
+if [ -d "bot/tests" ]; then
+    TEST_COUNT=$(find "bot/tests" -name "test_*.py" | wc -l)
     if [ "$TEST_COUNT" -gt 0 ]; then
         success "Найдено $TEST_COUNT тестовых файлов"
     else
