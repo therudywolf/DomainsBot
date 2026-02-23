@@ -9,7 +9,7 @@ from aiogram import F, Router, types
 from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 
-from access import has_access, has_permission, check_access, check_permission, ADMIN_ID
+from access import has_access, has_permission, check_access, check_permission, ADMIN_ID, is_admin_user
 from keyboards import (
     build_main_menu_keyboard,
     build_settings_keyboard,
@@ -506,7 +506,7 @@ async def handle_text(message: types.Message, state: FSMContext):
         await cmd_history(message)
         return
     
-    elif text == "👨‍💼 Админ-панель" and user_id == ADMIN_ID:
+    elif text == "👨‍💼 Админ-панель" and is_admin_user(user_id):
         help_text = (
             "👨‍💼 *Админ-панель*\n\n"
             "Используйте кнопки ниже для управления доступом:"
@@ -516,7 +516,7 @@ async def handle_text(message: types.Message, state: FSMContext):
             message.chat.id,
             help_text,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=build_admin_keyboard(),
+            reply_markup=build_admin_keyboard(user_id),
         )
         return
     

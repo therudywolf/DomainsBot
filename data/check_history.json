@@ -1,1 +1,92 @@
-[]
+[
+  {
+    "timestamp": "2026-02-23T08:07:00.482279",
+    "domain": "mos.ru",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [
+        "94.79.51.171"
+      ],
+      "AAAA": [],
+      "MX": [
+        "10 mx01.mos.ru."
+      ],
+      "NS": [
+        "ns4.mos.ru.",
+        "ns1.mos.ru.",
+        "ns3.mos.ru."
+      ],
+      "IP": [
+        "94.79.51.171"
+      ],
+      "TXT": [
+        "\"yandex-verification: ada20f70198d2619\"",
+        "\"v=spf1 redirect=_spf.mos.ru\"",
+        "\"MS=ms95580307\"",
+        "\"google-site-verification=EgkuJTEuiGJDP1C6QIPRfC5WunbBihbxht-jjl6nNHc\"",
+        "\"mailru-verification: 8b427464cb1c5c34\"",
+        "\"ugcfUdGQWPaTZ6LEhvJVXJbo0vnVP/eUSLiVszaOreK9b0JgGQOQqK+GjhjHxBTOWqrTbKIF/ncrGiOG9rUhuw==\"",
+        "\"google-site-verification=D9NAwDF7bjfTIxXLDNpqplFlIjM81mS3iGo_wVE5kkI\"",
+        "\"jkhsfkj43KJOHek34sdaf\""
+      ],
+      "CAA": [],
+      "SOA": [
+        "ns4.mos.ru. domains.it.mos.ru. 23272 10800 3600 2419200 900"
+      ]
+    },
+    "ssl": {
+      "CN": "*.mos.ru",
+      "gost": true,
+      "not_after": "2026-11-15T13:38:42+00:00",
+      "gost_not_after": null
+    },
+    "waf": true,
+    "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T08:07:51.285137",
+    "domain": "llllllllllllll.com",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [],
+      "AAAA": [],
+      "MX": [],
+      "NS": [],
+      "IP": [],
+      "TXT": [],
+      "CAA": [],
+      "SOA": []
+    },
+    "ssl": {
+      "CN": null,
+      "gost": false,
+      "not_after": null,
+      "gost_not_after": null
+    },
+    "waf": false,
+    "waf_method": "policy"
+  },
+  {
+    "timestamp": "2026-02-23T08:08:06.351971",
+    "domain": "llllllllllllll.com",
+    "user_id": 6323277521,
+    "dns": {
+      "A": [],
+      "AAAA": [],
+      "MX": [],
+      "NS": [],
+      "IP": [],
+      "TXT": [],
+      "CAA": [],
+      "SOA": []
+    },
+    "ssl": {
+      "CN": null,
+      "gost": false,
+      "not_after": null,
+      "gost_not_after": null
+    },
+    "waf": false,
+    "waf_method": "policy"
+  }
+]

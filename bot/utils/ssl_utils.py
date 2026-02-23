@@ -243,17 +243,14 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
         for task in tasks:
             if not task.done():
                 task.cancel()
-        # При таймауте не используем WireGuard (это не 504 ошибки)
-        all_504_errors = False
         last_error = asyncio.TimeoutError("Total timeout")
         checked_endpoints = len(endpoints)  # Все задачи были отменены
     
     # WireGuard fallback: прямая проверка GOST через openssl subprocess.
-    # Используется ТОЛЬКО когда ВСЕ gostsslcheck контейнеры вернули 504,
-    # что означает проблему с исходящим доступом у контейнеров.
-    # В этом случае маршрутизируем через WireGuard VPN напрямую.
-    if all_504_errors and checked_endpoints == len(endpoints) and last_error:
-        logger.info(f"Все endpoints вернули 504 для {domain}, пробуем прямую проверку через WireGuard")
+    # Используется когда ВСЕ gostsslcheck контейнеры недоступны (504, таймаут или другая ошибка).
+    # В этом случае пробуем маршрутизацию через WireGuard VPN.
+    if checked_endpoints == len(endpoints) and last_error:
+        logger.info(f"Все endpoints недоступны для {domain} ({last_error}), пробуем прямую проверку через WireGuard")
         try:
             if not ensure_wg_interface_up():
                 logger.warning(f"WireGuard контейнер недоступен для {domain}")
@@ -375,7 +372,7 @@ async def _get_gost_certificate_info(domain: str, port: int = 443) -> Optional[D
 #  Main entry point
 # ----------------------------
 @ttl_cache(ttl=3600)  # Кэш на 1 час
-async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
+async def fetch_ssl(domain: str, port: int = 443, use_external_only: bool = False) -> Dict[str, Any]:
     """Получает информацию об SSL сертификатах домена.
     
     Проверяет как обычный сертификат, так и GOST TLS сертификат (если доступен).
@@ -383,6 +380,8 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
     Args:
         domain: Домен для проверки
         port: Порт для подключения (по умолчанию 443)
+        use_external_only: Если True, проверка идёт только через внешнюю сеть
+            (без удалённых GOST контейнеров и WireGuard)
         
     Returns:
         Словарь с информацией о сертификатах:
@@ -395,10 +394,13 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
         - Cipher: Используемый шифр
         - IsGOST, gost: Наличие GOST (булево)
     """
-    # Шаг 1: Проверка через удаленный сервис
-    is_gost_remote = await _remote_is_gost(domain)
-    # Флаг, показывающий, что удаленная проверка не удалась (все endpoints недоступны)
-    gost_check_failed = (is_gost_remote is None)
+    # Шаг 1: Проверка через удаленный сервис (пропускается при use_external_only)
+    if use_external_only:
+        is_gost_remote = None
+        gost_check_failed = False
+    else:
+        is_gost_remote = await _remote_is_gost(domain)
+        gost_check_failed = (is_gost_remote is None)
     
     # Шаг 2: Локальная проверка TLS соединения
     ctx = ssl.create_default_context()
@@ -467,15 +469,15 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
         cert_info["Cipher"] = negotiated_cipher
         
         # Определяем GOST
-        if is_gost_remote is None:
-            # Если удаленная проверка не сработала, используем локальную эвристику
+        if use_external_only:
             is_gost = _cert_is_gost(cert) or (negotiated_cipher and _cipher_is_gost(negotiated_cipher))
-            # Если локальная проверка тоже не дала результата, оставляем флаг gost_check_failed
+            cert_info["GostCheckFailed"] = False
+        elif is_gost_remote is None:
+            is_gost = _cert_is_gost(cert) or (negotiated_cipher and _cipher_is_gost(negotiated_cipher))
             if not is_gost:
                 cert_info["GostCheckFailed"] = True
         else:
             is_gost = is_gost_remote
-            # Если удаленная проверка прошла успешно, сбрасываем флаг
             cert_info["GostCheckFailed"] = False
         
         cert_info["IsGOST"] = is_gost
@@ -485,8 +487,8 @@ async def fetch_ssl(domain: str, port: int = 443) -> Dict[str, Any]:
         writer.close()
         await writer.wait_closed()
     
-    # Шаг 3: Пытаемся получить информацию о GOST TLS сертификате
-    if is_gost:
+    # Шаг 3: Пытаемся получить информацию о GOST TLS сертификате (пропускается при use_external_only)
+    if is_gost and not use_external_only:
         gost_cert_info = await _get_gost_certificate_info(domain, port)
         if gost_cert_info:
             cert_info["GostNotBefore"] = gost_cert_info.get("GostNotBefore")

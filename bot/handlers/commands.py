@@ -25,6 +25,7 @@ from access import (
     ADMIN_ID,
     PERMISSIONS,
     get_bot_username,
+    is_admin_user,
 )
 from keyboards import (
     build_access_denied_keyboard,
@@ -128,7 +129,7 @@ async def cmd_health(message: types.Message, state: FSMContext):
     """
     user_id = message.from_user.id
     
-    if user_id != ADMIN_ID:
+    if not is_admin_user(user_id):
         await message.answer("❌ Эта команда доступна только администратору.")
         return
     
@@ -233,7 +234,7 @@ async def cmd_stats(message: types.Message):
     if not await check_access(message):
         return
     
-    if user_id != ADMIN_ID:
+    if not is_admin_user(user_id):
         await message.answer("❌ Эта команда доступна только администратору.")
         return
     

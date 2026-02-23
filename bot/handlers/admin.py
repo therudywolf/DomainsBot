@@ -20,6 +20,8 @@ from config import settings
 from access import (
     ADMIN_ID,
     PERMISSIONS,
+    PERMISSION_GROUPS,
+    PERMISSION_PRESETS,
     DEFAULT_PERMISSIONS,
     AdminStates,
     has_access,
@@ -34,6 +36,10 @@ from access import (
     set_user_permission,
     get_user_permissions,
     parse_user_list,
+    is_main_admin,
+    is_admin_user,
+    set_admin_role,
+    get_admin_list,
 )
 from keyboards import build_admin_keyboard, build_main_menu_keyboard
 from handlers.callbacks import safe_callback_answer
@@ -52,7 +58,7 @@ router = Router()
 
 @router.callback_query(F.data == "admin_add_access")
 async def admin_add_access(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -77,7 +83,7 @@ async def admin_add_access(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AdminStates.add_access_waiting)
 async def process_add_access(message: types.Message, state: FSMContext):
     """Обрабатывает добавление доступа пользователям."""
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin_user(message.from_user.id):
         return
     
     text = message.text or ""
@@ -85,14 +91,14 @@ async def process_add_access(message: types.Message, state: FSMContext):
     nav = _handle_admin_navigation(text)
     if nav:
         await state.clear()
-        if nav == "admin" and message.from_user and message.from_user.id == ADMIN_ID:
+        if nav == "admin" and message.from_user and is_admin_user(message.from_user.id):
             help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
             await safe_send_text(
                 message.bot,
                 message.chat.id,
                 help_text,
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=build_admin_keyboard(),
+                reply_markup=build_admin_keyboard(message.from_user.id),
             )
         else:
             from handlers.commands import cmd_start
@@ -184,7 +190,7 @@ async def process_add_access(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "admin_remove_access")
 async def admin_remove_access(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -203,7 +209,7 @@ async def admin_remove_access(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(AdminStates.remove_access_waiting)
 async def process_remove_access(message: types.Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin_user(message.from_user.id):
         return
     
     text = message.text or ""
@@ -211,24 +217,26 @@ async def process_remove_access(message: types.Message, state: FSMContext):
     nav = _handle_admin_navigation(text)
     if nav:
         await state.clear()
-        if nav == "admin" and message.from_user and message.from_user.id == ADMIN_ID:
+        if nav == "admin" and message.from_user and is_admin_user(message.from_user.id):
             help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
             await safe_send_text(
                 message.bot,
                 message.chat.id,
                 help_text,
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=build_admin_keyboard(),
+                reply_markup=build_admin_keyboard(message.from_user.id),
             )
         else:
             from handlers.commands import cmd_start
             await cmd_start(message, state)
         return
     
+    caller_id = message.from_user.id
     items = re.split(r"[\s,]+", text.strip())
     
     removed_count = 0
     not_found = []
+    denied = []
     
     for item in items:
         if not item:
@@ -236,6 +244,12 @@ async def process_remove_access(message: types.Message, state: FSMContext):
         
         try:
             user_id = int(item)
+            if user_id == ADMIN_ID:
+                denied.append(f"{user_id} (главный админ)")
+                continue
+            if is_admin_user(user_id) and not is_main_admin(caller_id):
+                denied.append(f"{user_id} (админ — удалять может только главный)")
+                continue
             if remove_access(user_id):
                 removed_count += 1
             else:
@@ -246,6 +260,8 @@ async def process_remove_access(message: types.Message, state: FSMContext):
     response = f"✅ Доступ удален для {removed_count} пользователей(я)"
     if not_found:
         response += f"\n⚠️ Не найдены в БД: {', '.join(not_found)}"
+    if denied:
+        response += f"\n🚫 Отказано: {', '.join(denied)}"
     
     await message.answer(response)
     await state.clear()
@@ -258,7 +274,7 @@ async def process_remove_access(message: types.Message, state: FSMContext):
 @router.callback_query(F.data == "admin_list_access")
 async def admin_list_access(callback: types.CallbackQuery):
     """Показывает список всех пользователей с их разрешениями."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -279,7 +295,8 @@ async def admin_list_access(callback: types.CallbackQuery):
         await callback.message.answer("❌ Ошибка: бот недоступен")
         return
     
-    lines = ["📋 *Список пользователей и их разрешения:*\n"]
+    lines = [f"👑 *Главный админ:* ID {ADMIN_ID}\n"]
+    lines.append("📋 *Список пользователей и их разрешения:*\n")
     
     user_ids = [int(user_id) for user_id in db.keys() if str(user_id).isdigit()]
     
@@ -302,20 +319,23 @@ async def admin_list_access(callback: types.CallbackQuery):
         
         added_at = data.get("added_at", "")
         permissions = data.get("permissions", DEFAULT_PERMISSIONS.copy())
+        user_is_admin = data.get("is_admin", False)
         
-        user_info = f"*ID: {user_id}*"
+        role_badge = " 👑 (админ)" if user_is_admin else ""
+        user_info = f"*ID: {user_id}*{role_badge}"
         if current_username:
             user_info += f" (@{current_username})"
         if added_at:
             user_info += f"\nДобавлен: {added_at[:10]}"
         
         lines.append(user_info)
-        lines.append("Разрешения:")
-        
-        for perm_key, perm_name in PERMISSIONS.items():
-            status = "✅" if permissions.get(perm_key, False) else "❌"
-            lines.append(f"  {status} {perm_name}")
-        
+        for group_name, group_keys in PERMISSION_GROUPS:
+            group_perms = []
+            for pk in group_keys:
+                pn = PERMISSIONS.get(pk, pk)
+                st = "✅" if permissions.get(pk, False) else "❌"
+                group_perms.append(f"{st} {pn}")
+            lines.append(f"  *{group_name}:* " + ", ".join(group_perms))
         lines.append("")
     
     text = "\n".join(lines)
@@ -336,7 +356,7 @@ async def admin_list_access(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin_manage_permissions")
 async def admin_manage_permissions(callback: types.CallbackQuery, state: FSMContext):
     """Начинает процесс управления разрешениями пользователя."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -406,6 +426,37 @@ def _handle_admin_navigation(text: str) -> Optional[str]:
     return None
 
 
+def _build_permission_keyboard(user_id: int, permissions: dict) -> list:
+    """Строит клавиатуру разрешений, сгруппированных по категориям, с пресетами."""
+    rows: List[list] = []
+    
+    for group_name, group_keys in PERMISSION_GROUPS:
+        rows.append([types.InlineKeyboardButton(
+            text=f"── {group_name} ──",
+            callback_data="noop",
+        )])
+        for pk in group_keys:
+            pn = PERMISSIONS.get(pk, pk)
+            current = permissions.get(pk, False)
+            icon = "✅" if current else "❌"
+            rows.append([types.InlineKeyboardButton(
+                text=f"{icon} {pn}",
+                callback_data=f"perm_toggle_{user_id}_{pk}",
+            )])
+    
+    preset_row = []
+    for preset_key, preset_data in PERMISSION_PRESETS.items():
+        preset_row.append(types.InlineKeyboardButton(
+            text=preset_data["label"],
+            callback_data=f"perm_preset_{user_id}_{preset_key}",
+        ))
+    if preset_row:
+        rows.append(preset_row)
+    
+    rows.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")])
+    return rows
+
+
 # ------------------------------------------------------------------ #
 #  process_manage_permissions_user (FSM)
 # ------------------------------------------------------------------ #
@@ -413,7 +464,7 @@ def _handle_admin_navigation(text: str) -> Optional[str]:
 @router.message(AdminStates.manage_permissions_user_waiting)
 async def process_manage_permissions_user(message: types.Message, state: FSMContext):
     """Обрабатывает выбор пользователя для управления разрешениями."""
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin_user(message.from_user.id):
         return
     
     text = message.text or ""
@@ -421,14 +472,14 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
     nav = _handle_admin_navigation(text)
     if nav:
         await state.clear()
-        if nav == "admin" and message.from_user and message.from_user.id == ADMIN_ID:
+        if nav == "admin" and message.from_user and is_admin_user(message.from_user.id):
             help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления доступом:"
             await safe_send_text(
                 message.bot,
                 message.chat.id,
                 help_text,
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=build_admin_keyboard(),
+                reply_markup=build_admin_keyboard(message.from_user.id),
             )
         else:
             from handlers.commands import cmd_start
@@ -469,24 +520,7 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
     if not current_username:
         current_username = user_data.get("username", "")
     
-    keyboard_buttons = []
-    for perm_key, perm_name in PERMISSIONS.items():
-        current_status = permissions.get(perm_key, False)
-        status_icon = "✅" if current_status else "❌"
-        keyboard_buttons.append([
-            types.InlineKeyboardButton(
-                text=f"{status_icon} {perm_name}",
-                callback_data=f"perm_toggle_{user_id}_{perm_key}",
-            )
-        ])
-    
-    keyboard_buttons.append([
-        types.InlineKeyboardButton(
-            text="🔙 Назад",
-            callback_data="admin_back",
-        )
-    ])
-    
+    keyboard_buttons = _build_permission_keyboard(user_id, permissions)
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     user_display = f"ID: {user_id}"
@@ -511,7 +545,7 @@ async def process_manage_permissions_user(message: types.Message, state: FSMCont
 @router.callback_query(F.data.startswith("perm_toggle_"))
 async def toggle_permission(callback: types.CallbackQuery):
     """Переключает разрешение пользователя."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -541,23 +575,7 @@ async def toggle_permission(callback: types.CallbackQuery):
         await safe_callback_answer(callback, f"✅ Разрешение '{perm_name}' {status}", show_alert=False)
         
         permissions = get_user_permissions(user_id)
-        keyboard_buttons = []
-        for perm_key, perm_name in PERMISSIONS.items():
-            current_status = permissions.get(perm_key, False)
-            status_icon = "✅" if current_status else "❌"
-            keyboard_buttons.append([
-                types.InlineKeyboardButton(
-                    text=f"{status_icon} {perm_name}",
-                    callback_data=f"perm_toggle_{user_id}_{perm_key}",
-                )
-            ])
-        
-        keyboard_buttons.append([
-            types.InlineKeyboardButton(
-                text="🔙 Назад",
-                callback_data="admin_back",
-            )
-        ])
+        keyboard_buttons = _build_permission_keyboard(user_id, permissions)
         
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         
@@ -569,6 +587,57 @@ async def toggle_permission(callback: types.CallbackQuery):
         await safe_callback_answer(callback, "❌ Ошибка при изменении разрешения", show_alert=True)
 
 
+@router.callback_query(F.data == "noop")
+async def noop_callback(callback: types.CallbackQuery):
+    """Пустой обработчик для разделителей групп."""
+    await safe_callback_answer(callback, "")
+
+
+@router.callback_query(F.data.startswith("perm_preset_"))
+async def apply_preset(callback: types.CallbackQuery):
+    """Применяет набор прав (пресет) к пользователю."""
+    if not is_admin_user(callback.from_user.id):
+        await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
+        return
+    
+    payload = callback.data.removeprefix("perm_preset_")
+    sep = payload.find("_")
+    if sep == -1:
+        await safe_callback_answer(callback, "❌ Ошибка формата", show_alert=True)
+        return
+    
+    try:
+        user_id = int(payload[:sep])
+        preset_key = payload[sep + 1:]
+    except (ValueError, IndexError):
+        await safe_callback_answer(callback, "❌ Ошибка парсинга", show_alert=True)
+        return
+    
+    preset = PERMISSION_PRESETS.get(preset_key)
+    if not preset:
+        await safe_callback_answer(callback, "❌ Неизвестный пресет", show_alert=True)
+        return
+    
+    db = get_access_list()
+    if str(user_id) not in db:
+        await safe_callback_answer(callback, "❌ Пользователь не найден", show_alert=True)
+        return
+    
+    for perm_key, perm_value in preset["permissions"].items():
+        set_user_permission(user_id, perm_key, perm_value)
+    
+    await safe_callback_answer(callback, f"✅ Применён пресет: {preset['label']}", show_alert=False)
+    
+    permissions = get_user_permissions(user_id)
+    keyboard_buttons = _build_permission_keyboard(user_id, permissions)
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    
+    try:
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        pass
+
+
 # ------------------------------------------------------------------ #
 #  admin_mass_edit_permissions
 # ------------------------------------------------------------------ #
@@ -576,7 +645,7 @@ async def toggle_permission(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin_mass_edit_permissions")
 async def admin_mass_edit_permissions(callback: types.CallbackQuery):
     """Показывает меню для массового редактирования прав всех пользователей."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -592,17 +661,23 @@ async def admin_mass_edit_permissions(callback: types.CallbackQuery):
         return
     
     keyboard_buttons = []
-    for perm_key, perm_name in PERMISSIONS.items():
-        keyboard_buttons.append([
-            types.InlineKeyboardButton(
-                text=f"➕ {perm_name} (всем)",
-                callback_data=f"mass_perm_add_{perm_key}",
-            ),
-            types.InlineKeyboardButton(
-                text=f"➖ {perm_name} (у всех)",
-                callback_data=f"mass_perm_remove_{perm_key}",
-            ),
-        ])
+    for group_name, group_keys in PERMISSION_GROUPS:
+        keyboard_buttons.append([types.InlineKeyboardButton(
+            text=f"── {group_name} ──",
+            callback_data="noop",
+        )])
+        for perm_key in group_keys:
+            perm_name = PERMISSIONS.get(perm_key, perm_key)
+            keyboard_buttons.append([
+                types.InlineKeyboardButton(
+                    text=f"➕ {perm_name}",
+                    callback_data=f"mass_perm_add_{perm_key}",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"➖ {perm_name}",
+                    callback_data=f"mass_perm_remove_{perm_key}",
+                ),
+            ])
     
     keyboard_buttons.append([
         types.InlineKeyboardButton(
@@ -635,7 +710,7 @@ async def admin_mass_edit_permissions(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("mass_perm_add_"))
 async def mass_perm_add(callback: types.CallbackQuery):
     """Добавляет разрешение всем пользователям."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -656,7 +731,7 @@ async def mass_perm_add(callback: types.CallbackQuery):
         if not str(user_id_str).isdigit():
             continue
         user_id = int(user_id_str)
-        if user_id == ADMIN_ID:
+        if is_main_admin(user_id):
             continue
         
         if set_user_permission(user_id, permission, True):
@@ -669,38 +744,7 @@ async def mass_perm_add(callback: types.CallbackQuery):
     )
     
     if callback.message:
-        db = get_access_list()
-        keyboard_buttons = []
-        for perm_key, perm_name_item in PERMISSIONS.items():
-            keyboard_buttons.append([
-                types.InlineKeyboardButton(
-                    text=f"➕ {perm_name_item} (всем)",
-                    callback_data=f"mass_perm_add_{perm_key}",
-                ),
-                types.InlineKeyboardButton(
-                    text=f"➖ {perm_name_item} (у всех)",
-                    callback_data=f"mass_perm_remove_{perm_key}",
-                ),
-            ])
-        
-        keyboard_buttons.append([
-            types.InlineKeyboardButton(
-                text="🔙 Назад",
-                callback_data="admin_back",
-            )
-        ])
-        
-        keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        user_count = len([uid for uid in db.keys() if str(uid).isdigit()])
-        text_msg = (
-            f"⚡ <b>Массовое редактирование прав</b>\n\n"
-            f"Пользователей в базе: {user_count}\n\n"
-            f"Выберите действие для каждого разрешения:"
-        )
-        try:
-            await callback.message.edit_text(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-        except Exception:
-            pass
+        await _refresh_mass_edit_message(callback)
 
 
 # ------------------------------------------------------------------ #
@@ -710,7 +754,7 @@ async def mass_perm_add(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("mass_perm_remove_"))
 async def mass_perm_remove(callback: types.CallbackQuery):
     """Убирает разрешение у всех пользователей."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -731,7 +775,7 @@ async def mass_perm_remove(callback: types.CallbackQuery):
         if not str(user_id_str).isdigit():
             continue
         user_id = int(user_id_str)
-        if user_id == ADMIN_ID:
+        if is_main_admin(user_id):
             continue
         
         if set_user_permission(user_id, permission, False):
@@ -744,38 +788,46 @@ async def mass_perm_remove(callback: types.CallbackQuery):
     )
     
     if callback.message:
-        db = get_access_list()
-        keyboard_buttons = []
-        for perm_key, perm_name_item in PERMISSIONS.items():
+        await _refresh_mass_edit_message(callback)
+
+
+async def _refresh_mass_edit_message(callback: types.CallbackQuery) -> None:
+    """Обновляет сообщение массового редактирования прав."""
+    db = get_access_list()
+    keyboard_buttons = []
+    for group_name, group_keys in PERMISSION_GROUPS:
+        keyboard_buttons.append([types.InlineKeyboardButton(
+            text=f"── {group_name} ──",
+            callback_data="noop",
+        )])
+        for perm_key in group_keys:
+            perm_name = PERMISSIONS.get(perm_key, perm_key)
             keyboard_buttons.append([
                 types.InlineKeyboardButton(
-                    text=f"➕ {perm_name_item} (всем)",
+                    text=f"➕ {perm_name}",
                     callback_data=f"mass_perm_add_{perm_key}",
                 ),
                 types.InlineKeyboardButton(
-                    text=f"➖ {perm_name_item} (у всех)",
+                    text=f"➖ {perm_name}",
                     callback_data=f"mass_perm_remove_{perm_key}",
                 ),
             ])
-        
-        keyboard_buttons.append([
-            types.InlineKeyboardButton(
-                text="🔙 Назад",
-                callback_data="admin_back",
-            )
-        ])
-        
-        keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        user_count = len([uid for uid in db.keys() if str(uid).isdigit()])
-        text_msg = (
-            f"⚡ <b>Массовое редактирование прав</b>\n\n"
-            f"Пользователей в базе: {user_count}\n\n"
-            f"Выберите действие для каждого разрешения:"
-        )
-        try:
-            await callback.message.edit_text(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-        except Exception:
-            pass
+    
+    keyboard_buttons.append([
+        types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")
+    ])
+    
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    user_count = len([uid for uid in db.keys() if str(uid).isdigit()])
+    text_msg = (
+        f"⚡ <b>Массовое редактирование прав</b>\n\n"
+        f"Пользователей в базе: {user_count}\n\n"
+        f"Выберите действие для каждого разрешения:"
+    )
+    try:
+        await callback.message.edit_text(text_msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    except Exception:
+        pass
 
 
 # ------------------------------------------------------------------ #
@@ -785,7 +837,7 @@ async def mass_perm_remove(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin_export_users")
 async def admin_export_users(callback: types.CallbackQuery):
     """Экспортирует список пользователей в формате JSON для удобного переноса."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -829,6 +881,7 @@ async def admin_export_users(callback: types.CallbackQuery):
             "username": current_username,
             "added_at": data.get("added_at", ""),
             "permissions": data.get("permissions", DEFAULT_PERMISSIONS.copy()),
+            "is_admin": data.get("is_admin", False),
         }
     
     json_data = json.dumps(export_data, ensure_ascii=False, indent=2, default=str)
@@ -863,7 +916,7 @@ async def admin_export_users(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin_check_wg")
 async def admin_check_wg(callback: types.CallbackQuery):
     """Проверка подключения WireGuard."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
 
@@ -937,7 +990,7 @@ async def admin_check_wg(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin_wg_up")
 async def admin_wg_up(callback: types.CallbackQuery):
     """Проверить доступность WireGuard контейнера."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -958,7 +1011,7 @@ async def admin_wg_up(callback: types.CallbackQuery):
 @router.callback_query(F.data == "admin_wg_down")
 async def admin_wg_down(callback: types.CallbackQuery):
     """Проверить статус WireGuard контейнера."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -972,16 +1025,19 @@ async def admin_wg_down(callback: types.CallbackQuery):
 # ------------------------------------------------------------------ #
 
 @router.callback_query(F.data == "admin_back")
-async def admin_back(callback: types.CallbackQuery):
+async def admin_back(callback: types.CallbackQuery, state: FSMContext):
     """Возврат в админ-панель."""
-    if callback.from_user.id != ADMIN_ID:
+    if not is_admin_user(callback.from_user.id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
+    
+    await state.clear()
     
     if not callback.message:
         await safe_callback_answer(callback, "❌ Ошибка: сообщение недоступно", show_alert=True)
         return
     
+    caller_uid = callback.from_user.id
     help_text = (
         "👨‍💼 *Админ-панель*\n\n"
         "Используйте кнопки ниже для управления:"
@@ -991,16 +1047,204 @@ async def admin_back(callback: types.CallbackQuery):
         await callback.message.edit_text(
             help_text,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=build_admin_keyboard(),
+            reply_markup=build_admin_keyboard(caller_uid),
         )
     except Exception as e:
         logger.error(f"Ошибка при редактировании сообщения: {e}")
         await callback.message.answer(
             help_text,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=build_admin_keyboard(),
+            reply_markup=build_admin_keyboard(caller_uid),
         )
     await safe_callback_answer(callback, "")
+
+
+# ------------------------------------------------------------------ #
+#  admin_grant_admin — выдача роли админа (только главный)
+# ------------------------------------------------------------------ #
+
+@router.callback_query(F.data == "admin_grant_admin")
+async def admin_grant_admin(callback: types.CallbackQuery, state: FSMContext):
+    """Начинает процесс выдачи роли админа."""
+    if not is_main_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "❌ Только главный администратор может назначать админов", show_alert=True)
+        return
+    
+    db = get_access_list()
+    non_admins = []
+    bot = callback.message.bot if callback.message else callback.bot
+    
+    user_ids = [int(uid) for uid in db.keys() if str(uid).isdigit()]
+    username_tasks = [get_username_by_id(bot, uid) for uid in user_ids]
+    usernames = await asyncio.gather(*username_tasks, return_exceptions=True)
+    username_map = {}
+    for uid, uname_result in zip(user_ids, usernames):
+        if isinstance(uname_result, str):
+            username_map[uid] = uname_result
+    
+    for uid_str, data in sorted(db.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 0):
+        if not str(uid_str).isdigit():
+            continue
+        uid = int(uid_str)
+        if is_main_admin(uid) or data.get("is_admin", False):
+            continue
+        uname = username_map.get(uid) or data.get("username", "")
+        display = f"ID: {uid}"
+        if uname:
+            display += f" (@{uname})"
+        non_admins.append(display)
+    
+    if not non_admins:
+        await callback.message.answer("❌ Нет обычных пользователей для назначения админом.")
+        await safe_callback_answer(callback, "")
+        return
+    
+    await state.set_state(AdminStates.grant_admin_waiting)
+    text = "👑 *Выдача роли админа*\n\nВыберите пользователя (введите TG ID или @username):\n\n"
+    text += "\n".join(f"• {u}" for u in non_admins)
+    await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+    await safe_callback_answer(callback, "")
+
+
+@router.message(AdminStates.grant_admin_waiting)
+async def process_grant_admin(message: types.Message, state: FSMContext):
+    """Обрабатывает выдачу роли админа."""
+    if not is_main_admin(message.from_user.id):
+        return
+    
+    text = (message.text or "").strip()
+    nav = _handle_admin_navigation(text)
+    if nav:
+        await state.clear()
+        if nav == "admin":
+            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления:"
+            await safe_send_text(message.bot, message.chat.id, help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_admin_keyboard(message.from_user.id))
+        else:
+            from handlers.commands import cmd_start
+            await cmd_start(message, state)
+        return
+    
+    target_id = None
+    if text.startswith("@"):
+        target_id = await get_id_by_username(message.bot, text)
+        if not target_id:
+            await message.answer(f"❌ Не удалось найти пользователя {text}")
+            return
+    else:
+        try:
+            target_id = int(text)
+        except ValueError:
+            await message.answer("❌ Введите числовой TG ID или @username.")
+            return
+    
+    if is_main_admin(target_id):
+        await message.answer("❌ Главный админ уже имеет все права.")
+        await state.clear()
+        return
+    
+    if not has_access(target_id):
+        await message.answer("❌ Пользователь не найден в базе. Сначала добавьте ему доступ.")
+        await state.clear()
+        return
+    
+    if is_admin_user(target_id):
+        await message.answer("ℹ️ Пользователь уже является админом.")
+        await state.clear()
+        return
+    
+    if set_admin_role(target_id, True):
+        await message.answer(f"✅ Пользователь {target_id} назначен админом.")
+    else:
+        await message.answer("❌ Не удалось назначить роль админа.")
+    
+    await state.clear()
+
+
+# ------------------------------------------------------------------ #
+#  admin_revoke_admin — снятие роли админа (только главный)
+# ------------------------------------------------------------------ #
+
+@router.callback_query(F.data == "admin_revoke_admin")
+async def admin_revoke_admin(callback: types.CallbackQuery, state: FSMContext):
+    """Начинает процесс снятия роли админа."""
+    if not is_main_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "❌ Только главный администратор может снимать админов", show_alert=True)
+        return
+    
+    admin_ids = get_admin_list()
+    if not admin_ids:
+        await callback.message.answer("❌ Нет назначенных админов.")
+        await safe_callback_answer(callback, "")
+        return
+    
+    bot = callback.message.bot if callback.message else callback.bot
+    db = get_access_list()
+    
+    username_tasks = [get_username_by_id(bot, uid) for uid in admin_ids]
+    usernames = await asyncio.gather(*username_tasks, return_exceptions=True)
+    
+    lines = []
+    for uid, uname_result in zip(admin_ids, usernames):
+        uname = uname_result if isinstance(uname_result, str) else db.get(str(uid), {}).get("username", "")
+        display = f"ID: {uid}"
+        if uname:
+            display += f" (@{uname})"
+        lines.append(f"• {display}")
+    
+    await state.set_state(AdminStates.revoke_admin_waiting)
+    text = "🚫 *Снятие роли админа*\n\nВыберите админа (введите TG ID или @username):\n\n"
+    text += "\n".join(lines)
+    await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+    await safe_callback_answer(callback, "")
+
+
+@router.message(AdminStates.revoke_admin_waiting)
+async def process_revoke_admin(message: types.Message, state: FSMContext):
+    """Обрабатывает снятие роли админа."""
+    if not is_main_admin(message.from_user.id):
+        return
+    
+    text = (message.text or "").strip()
+    nav = _handle_admin_navigation(text)
+    if nav:
+        await state.clear()
+        if nav == "admin":
+            help_text = "👨‍💼 *Админ-панель*\n\nИспользуйте кнопки ниже для управления:"
+            await safe_send_text(message.bot, message.chat.id, help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=build_admin_keyboard(message.from_user.id))
+        else:
+            from handlers.commands import cmd_start
+            await cmd_start(message, state)
+        return
+    
+    target_id = None
+    if text.startswith("@"):
+        target_id = await get_id_by_username(message.bot, text)
+        if not target_id:
+            await message.answer(f"❌ Не удалось найти пользователя {text}")
+            return
+    else:
+        try:
+            target_id = int(text)
+        except ValueError:
+            await message.answer("❌ Введите числовой TG ID или @username.")
+            return
+    
+    if is_main_admin(target_id):
+        await message.answer("❌ Нельзя снять роль админа с главного администратора.")
+        await state.clear()
+        return
+    
+    if not is_admin_user(target_id):
+        await message.answer("ℹ️ Пользователь не является админом.")
+        await state.clear()
+        return
+    
+    if set_admin_role(target_id, False):
+        await message.answer(f"✅ Роль админа снята с пользователя {target_id}.")
+    else:
+        await message.answer("❌ Не удалось снять роль админа.")
+    
+    await state.clear()
 
 
 # ------------------------------------------------------------------ #
@@ -1011,7 +1255,7 @@ async def admin_back(callback: types.CallbackQuery):
 async def admin_stats_callback(callback: types.CallbackQuery):
     """Показывает статистику через админ-панель."""
     try:
-        if callback.from_user.id != ADMIN_ID:
+        if not is_admin_user(callback.from_user.id):
             await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
             return
         

@@ -1,13 +1,20 @@
 {
   "start_time": 1770983041.4717493,
-  "total_domains_checked": 0,
-  "total_users": [],
-  "domains_checked": {},
+  "total_domains_checked": 3,
+  "total_users": [
+    6323277521
+  ],
+  "domains_checked": {
+    "mos.ru": 1,
+    "llllllllllllll.com": 2
+  },
   "errors": {},
   "commands_used": {
-    "start": 2
+    "start": 3
   },
   "errors_by_type": {},
-  "activity_by_hour": {},
+  "activity_by_hour": {
+    "8": 3
+  },
   "last_reset": "2026-02-13T11:44:01.471761"
 }

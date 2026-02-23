@@ -32,6 +32,7 @@ from access import (
     AdminStates,
     MonitoringStates,
     ChatSettingsStates,
+    is_admin_user,
 )
 
 from keyboards import (
@@ -170,8 +171,11 @@ async def switch_mode(callback: types.CallbackQuery, state: FSMContext):
             for row in callback.message.reply_markup.inline_keyboard:
                 for button in row:
                     if button.callback_data:
-                        if "recheck_" in button.callback_data:
-                            domain = button.callback_data.replace("recheck_", "")
+                        if button.callback_data.startswith("recheckext_"):
+                            domain = button.callback_data.removeprefix("recheckext_")
+                            break
+                        elif button.callback_data.startswith("recheck_"):
+                            domain = button.callback_data.removeprefix("recheck_")
                             break
                         elif "quick_waf_" in button.callback_data:
                             domain = button.callback_data.replace("quick_waf_", "")
@@ -271,6 +275,7 @@ async def _recheck_domain(
     domain: str,
     mode: Optional[str] = None,
     requester_id: Optional[int] = None,
+    use_external_only: bool = False,
 ) -> None:
     """
     Перепроверяет один домен и обновляет отчет.
@@ -281,6 +286,7 @@ async def _recheck_domain(
         domain: Домен для перепроверки
         mode: Режим отчета (если None, берется из state)
         requester_id: ID пользователя, запросившего перепроверку
+        use_external_only: Проверка только через внешнюю сеть (без GOST/WireGuard)
     """
     start_time = asyncio.get_running_loop().time()
     user_id = requester_id or (message.from_user.id if message.from_user else 0)
@@ -301,15 +307,16 @@ async def _recheck_domain(
         # Обновляем сообщение
         logger.debug(f"Обновление сообщения для домена {domain}")
         from utils.telegram_utils import safe_edit_text
-        await safe_edit_text(message, "⏳ Перепроверяю домен...", parse_mode=ParseMode.HTML)
+        loading_text = "⏳ Проверяю домен через внешнюю сеть..." if use_external_only else "⏳ Перепроверяю домен..."
+        await safe_edit_text(message, loading_text, parse_mode=ParseMode.HTML)
         
         # Получаем данные
         check_start = asyncio.get_running_loop().time()
-        logger.debug(f"Начало проверки домена {domain}")
+        logger.debug(f"Начало проверки домена {domain} (external_only={use_external_only})")
         
         dns_info, ssl_info, waf_result = await asyncio.gather(
             fetch_dns(domain, settings.DNS_TIMEOUT),
-            fetch_ssl(domain),
+            fetch_ssl(domain, use_external_only=use_external_only),
             test_waf(domain, user_id=user_id),
             return_exceptions=True
         )
@@ -420,6 +427,33 @@ async def _recheck_domain(
         )
 
 
+@router.callback_query(F.data.startswith("recheckext_"))
+async def quick_recheck_external(callback: types.CallbackQuery, state: FSMContext):
+    """Перепроверка домена только через внешнюю сеть (без GOST/WireGuard)."""
+    start_time = asyncio.get_running_loop().time()
+    user_id = callback.from_user.id
+    
+    if not has_access(user_id):
+        await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
+        return
+    if not has_permission(user_id, "check_domains"):
+        await safe_callback_answer(callback, "❌ Нет доступа к проверке доменов", show_alert=True)
+        return
+    
+    domain = callback.data.removeprefix("recheckext_")
+    logger.info(f"🌐 Проверка через внешнюю сеть | user_id={user_id} | domain={domain}")
+    await safe_callback_answer(callback, "🌐 Проверяю через внешнюю сеть...")
+    
+    try:
+        await _recheck_domain(callback.message, state, domain, requester_id=user_id, use_external_only=True)
+        duration = asyncio.get_running_loop().time() - start_time
+        logger.info(f"✅ Проверка через внешнюю сеть завершена | domain={domain} | user_id={user_id} | duration={duration:.2f}s")
+    except Exception as e:
+        duration = asyncio.get_running_loop().time() - start_time
+        logger.error(f"❌ Ошибка при проверке через внешнюю сеть | domain={domain} | user_id={user_id} | duration={duration:.2f}s | error={type(e).__name__}: {str(e)}", exc_info=True)
+        await safe_callback_answer(callback, "❌ Ошибка при проверке через внешнюю сеть", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("recheck_"))
 async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
     """Быстрая перепроверка домена."""
@@ -442,8 +476,7 @@ async def quick_recheck(callback: types.CallbackQuery, state: FSMContext):
         await safe_callback_answer(callback, "❌ Нет доступа к проверке доменов", show_alert=True)
         return
     
-    # Извлекаем домен из callback_data
-    domain = callback.data.replace("recheck_", "")
+    domain = callback.data.removeprefix("recheck_")
     logger.debug(f"Перепроверка домена {domain} для user_id={user_id}")
     
     await safe_callback_answer(callback, "🔄 Перепроверяю домен...")
@@ -903,7 +936,7 @@ async def stats_export_json(callback: types.CallbackQuery):
     """Экспортирует статистику в JSON."""
     user_id = callback.from_user.id
     
-    if user_id != ADMIN_ID:
+    if not is_admin_user(user_id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -930,7 +963,7 @@ async def stats_export_csv(callback: types.CallbackQuery):
     """Экспортирует статистику в CSV."""
     user_id = callback.from_user.id
     
-    if user_id != ADMIN_ID:
+    if not is_admin_user(user_id):
         await safe_callback_answer(callback, "❌ Только администратор", show_alert=True)
         return
     
@@ -996,6 +1029,8 @@ async def main_menu_callback(callback: types.CallbackQuery, state: FSMContext):
     if not has_access(user_id):
         await safe_callback_answer(callback, "❌ Нет доступа", show_alert=True)
         return
+    
+    await state.clear()
     
     help_text = (
         "🏠 *Главное меню*\n\n"

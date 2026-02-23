@@ -498,13 +498,21 @@ def build_report_keyboard(
     if detail_buttons:
         buttons.append(detail_buttons)
     
-    # Кнопка перепроверки домена
-    buttons.append([
+    # Кнопки перепроверки домена
+    recheck_row = [
         aiogram_types.InlineKeyboardButton(
-            text="🔄 Перепроверить домен",
+            text="🔄 Перепроверить",
             callback_data=f"recheck_{domain}",
         )
-    ])
+    ]
+    if len(f"recheckext_{domain}") <= 64:
+        recheck_row.append(
+            aiogram_types.InlineKeyboardButton(
+                text="🌐 Через внешнюю сеть",
+                callback_data=f"recheckext_{domain}",
+            )
+        )
+    buttons.append(recheck_row)
     
     # Кнопка "Поставить на мониторинг" (если есть право)
     if has_monitoring_permission:

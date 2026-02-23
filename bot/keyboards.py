@@ -1,5 +1,5 @@
 from aiogram import types
-from access import has_access, has_permission, ADMIN_ID, REQUEST_ACCESS_URL
+from access import has_access, has_permission, ADMIN_ID, REQUEST_ACCESS_URL, is_admin_user, is_main_admin
 from utils.prefs import get_mode, get_waf_mode
 
 DEFAULT_MODE = "full"
@@ -134,7 +134,7 @@ def build_main_menu_keyboard(user_id: int) -> types.ReplyKeyboardMarkup:
         else:
             keyboard.append([types.KeyboardButton(text="📋 История")])
     
-    if user_id == ADMIN_ID:
+    if is_admin_user(user_id):
         keyboard.append([
             types.KeyboardButton(text="👨‍💼 Админ-панель"),
         ])
@@ -234,51 +234,67 @@ def build_access_denied_keyboard() -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(inline_keyboard=[])
 
 
-def build_admin_keyboard() -> types.InlineKeyboardMarkup:
-    """Админ-панель кнопок с расширенным функционалом."""
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text="➕ Добавить доступ",
-                    callback_data="admin_add_access",
-                ),
-                types.InlineKeyboardButton(
-                    text="➖ Удалить доступ",
-                    callback_data="admin_remove_access",
-                ),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="📋 Список пользователей",
-                    callback_data="admin_list_access",
-                ),
-                types.InlineKeyboardButton(
-                    text="🔐 Управление разрешениями",
-                    callback_data="admin_manage_permissions",
-                ),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="⚡ Массовое редактирование прав",
-                    callback_data="admin_mass_edit_permissions",
-                ),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="📤 Экспорт пользователей",
-                    callback_data="admin_export_users",
-                ),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="📊 Статистика",
-                    callback_data="admin_stats",
-                ),
-                types.InlineKeyboardButton(
-                    text="🔌 Проверить WireGuard",
-                    callback_data="admin_check_wg",
-                ),
-            ],
-        ]
-    )
+def build_admin_keyboard(user_id: int = 0) -> types.InlineKeyboardMarkup:
+    """Админ-панель кнопок с расширенным функционалом.
+    
+    Args:
+        user_id: ID пользователя (для показа кнопок управления админами только главному)
+    """
+    rows = [
+        [
+            types.InlineKeyboardButton(
+                text="➕ Добавить доступ",
+                callback_data="admin_add_access",
+            ),
+            types.InlineKeyboardButton(
+                text="➖ Удалить доступ",
+                callback_data="admin_remove_access",
+            ),
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="📋 Список пользователей",
+                callback_data="admin_list_access",
+            ),
+            types.InlineKeyboardButton(
+                text="🔐 Управление разрешениями",
+                callback_data="admin_manage_permissions",
+            ),
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="⚡ Массовое редактирование прав",
+                callback_data="admin_mass_edit_permissions",
+            ),
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="📤 Экспорт пользователей",
+                callback_data="admin_export_users",
+            ),
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="📊 Статистика",
+                callback_data="admin_stats",
+            ),
+            types.InlineKeyboardButton(
+                text="🔌 Проверить WireGuard",
+                callback_data="admin_check_wg",
+            ),
+        ],
+    ]
+    
+    if is_main_admin(user_id):
+        rows.append([
+            types.InlineKeyboardButton(
+                text="👑 Выдать админку",
+                callback_data="admin_grant_admin",
+            ),
+            types.InlineKeyboardButton(
+                text="🚫 Снять админку",
+                callback_data="admin_revoke_admin",
+            ),
+        ])
+    
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)

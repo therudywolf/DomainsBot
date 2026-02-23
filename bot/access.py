@@ -48,6 +48,27 @@ PERMISSIONS = {
     "file_upload": "📄 Загрузка файлов",
 }
 
+PERMISSION_GROUPS = [
+    ("Проверки", ["check_domains"]),
+    ("Мониторинг и история", ["monitoring", "history"]),
+    ("Интерфейс и данные", ["settings", "inline", "file_upload"]),
+]
+
+PERMISSION_PRESETS = {
+    "basic": {
+        "label": "📦 Базовый",
+        "permissions": {"check_domains": True, "monitoring": False, "history": False, "settings": True, "inline": True, "file_upload": False},
+    },
+    "full": {
+        "label": "⭐ Полный",
+        "permissions": {"check_domains": True, "monitoring": True, "history": True, "settings": True, "inline": True, "file_upload": True},
+    },
+    "readonly": {
+        "label": "👁️ Только просмотр",
+        "permissions": {"check_domains": True, "monitoring": False, "history": True, "settings": False, "inline": False, "file_upload": False},
+    },
+}
+
 DEFAULT_PERMISSIONS = {
     "check_domains": True,
     "monitoring": False,
@@ -70,8 +91,11 @@ def load_access_db() -> dict:
             with open(ACCESS_DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for user_id, user_data in data.items():
-                    if isinstance(user_data, dict) and "permissions" not in user_data:
-                        user_data["permissions"] = DEFAULT_PERMISSIONS.copy()
+                    if isinstance(user_data, dict):
+                        if "permissions" not in user_data:
+                            user_data["permissions"] = DEFAULT_PERMISSIONS.copy()
+                        if "is_admin" not in user_data:
+                            user_data["is_admin"] = False
                 return data
         except Exception as e:
             logger.error(f"Ошибка при загрузке БД: {e}")
@@ -205,6 +229,7 @@ def add_access(user_id: int, username: str = "", permissions: Optional[dict] = N
             "username": username or "",
             "added_at": str(datetime.now()),
             "permissions": permissions if permissions is not None else DEFAULT_PERMISSIONS.copy(),
+            "is_admin": False,
         }
     
     save_access_db(db)
@@ -226,6 +251,55 @@ def remove_access(user_id: int) -> bool:
 def get_access_list() -> dict:
     """Получает список всех доступов с разрешениями."""
     return load_access_db()
+
+
+# ---------- Управление ролями админов ----------
+
+def is_main_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь главным админом (из конфига)."""
+    return user_id == ADMIN_ID
+
+
+def is_admin_user(user_id: int) -> bool:
+    """Проверяет, является ли пользователь админом (главным или назначенным)."""
+    if user_id == ADMIN_ID:
+        return True
+    db = load_access_db()
+    user_data = db.get(str(user_id), {})
+    return isinstance(user_data, dict) and user_data.get("is_admin", False)
+
+
+def set_admin_role(user_id: int, value: bool) -> bool:
+    """Устанавливает или снимает роль админа для пользователя в БД.
+    
+    Не применяется к главному админу (ADMIN_ID) — он всегда админ.
+    
+    Returns:
+        True если успешно, False если пользователь не найден или это главный админ.
+    """
+    if user_id == ADMIN_ID:
+        return False
+    db = load_access_db()
+    user_key = str(user_id)
+    if user_key not in db:
+        return False
+    db[user_key]["is_admin"] = value
+    save_access_db(db)
+    logger.info(f"Роль админа для пользователя {user_id} установлена в {value}")
+    return True
+
+
+def get_admin_list() -> List[int]:
+    """Возвращает список ID всех назначенных админов (без главного)."""
+    db = load_access_db()
+    admins = []
+    for uid_str, data in db.items():
+        if isinstance(data, dict) and data.get("is_admin", False):
+            try:
+                admins.append(int(uid_str))
+            except ValueError:
+                pass
+    return admins
 
 
 async def get_username_by_id(bot: Bot, user_id: int) -> Optional[str]:
@@ -437,6 +511,8 @@ class AdminStates(StatesGroup):
     remove_access_waiting = State()
     manage_permissions_user_waiting = State()
     manage_permissions_permission_waiting = State()
+    grant_admin_waiting = State()
+    revoke_admin_waiting = State()
 
 
 class MonitoringStates(StatesGroup):
