@@ -149,11 +149,9 @@ async def _write_to_shelve(key: str, value: Any, ttl: int, maxsize: int) -> bool
     for attempt in range(MAX_RETRIES):
         try:
             async with _LOCK:
-                with shelve.open(str(_DB_PATH), writeback=True) as db:
+                with shelve.open(str(_DB_PATH)) as db:
                     db[key] = (now + ttl, value)
-                    # Ограничиваем размер кэша
                     if len(db) > maxsize:
-                        # Удаляем самые старые записи
                         items = list(db.items())
                         items.sort(
                             key=lambda x: x[1][0] 
@@ -161,7 +159,7 @@ async def _write_to_shelve(key: str, value: Any, ttl: int, maxsize: int) -> bool
                             else 0
                         )
                         for k, _ in items[:len(items) - maxsize]:
-                            db.pop(k, None)
+                            del db[k]
             return True
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -229,20 +227,18 @@ def ttl_cache(ttl: int = TTL_SECONDS, maxsize: int = MAXSIZE):
             # Если кэш не найден, помечаем что вычисляем
             try:
                 async with _LOCK:
-                    with shelve.open(str(_DB_PATH), writeback=True) as db:
-                        db[key] = (0, None)  # Помечаем что вычисляем
+                    with shelve.open(str(_DB_PATH)) as db:
+                        db[key] = (0, None)
             except Exception as e:
                 logger.debug(f"Не удалось пометить вычисление в shelve: {e}")
 
-            # Выполняем реальный вызов
             try:
                 result = await func(*args, **kwargs)
             except Exception as e:
                 logger.error(f"Ошибка при выполнении {func.__name__}: {e}", exc_info=True)
-                # Удаляем пометку о вычислении при ошибке
                 try:
                     async with _LOCK:
-                        with shelve.open(str(_DB_PATH), writeback=True) as db:
+                        with shelve.open(str(_DB_PATH)) as db:
                             if key in db and db[key][0] == 0:
                                 del db[key]
                 except Exception:

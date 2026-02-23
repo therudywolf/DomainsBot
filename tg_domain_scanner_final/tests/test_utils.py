@@ -14,6 +14,12 @@ async def test_ssl():
     assert res["CN"]
 
 @pytest.mark.asyncio
-async def test_waf():
+async def test_waf_returns_tuple():
+    """test_waf returns (bool, str) tuple."""
     result = await test_waf("example.com", timeout=10)
-    assert isinstance(result, bool)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    waf_enabled, waf_method = result
+    assert isinstance(waf_enabled, bool)
+    assert isinstance(waf_method, str)
+    assert waf_method in ("policy", "light")

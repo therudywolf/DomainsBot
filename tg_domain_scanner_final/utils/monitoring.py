@@ -16,7 +16,6 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
-from threading import RLock
 
 from aiogram import Bot
 
@@ -33,10 +32,7 @@ logger = logging.getLogger(__name__)
 MONITORING_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "monitoring_db.json"
 MONITORING_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Блокировка для потокобезопасности (для синхронных операций)
-_monitoring_lock = RLock()
-
-# Async блокировка для async операций
+# Единая async блокировка для всех операций с БД мониторинга
 _monitoring_async_lock = asyncio.Lock()
 
 # Глобальная переменная для фоновой задачи
@@ -56,29 +52,7 @@ async def _save_monitoring_db(data: Dict[str, Any]) -> None:
     await async_write_json(MONITORING_DB_PATH, data)
 
 
-def _load_monitoring_db_sync() -> Dict[str, Any]:
-    """Синхронная версия загрузки БД (для обратной совместимости)."""
-    if not MONITORING_DB_PATH.exists():
-        return {}
-    
-    try:
-        with open(MONITORING_DB_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Ошибка при загрузке БД мониторинга: {e}")
-        return {}
-
-
-def _save_monitoring_db_sync(data: Dict[str, Any]) -> None:
-    """Синхронная версия сохранения БД (для обратной совместимости)."""
-    try:
-        with open(MONITORING_DB_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-    except Exception as e:
-        logger.error(f"Ошибка при сохранении БД мониторинга: {e}")
-
-
-def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
+async def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
     """Добавляет домен в мониторинг для пользователя.
     
     Args:
@@ -88,15 +62,15 @@ def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
     Returns:
         True если домен добавлен, False если уже был в мониторинге
     """
-    with _monitoring_lock:
-        db = _load_monitoring_db_sync()
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
         
         user_key = str(user_id)
         if user_key not in db:
             db[user_key] = {
                 "domains": {},
                 "enabled": True,
-                "interval_minutes": 15,  # По умолчанию 15 минут
+                "interval_minutes": 15,
             }
         
         if domain not in db[user_key]["domains"]:
@@ -104,16 +78,16 @@ def add_domain_to_monitoring(user_id: int, domain: str) -> bool:
                 "added_at": datetime.now().isoformat(),
                 "last_check": None,
                 "last_state": None,
-                "state_history": [],  # История состояний для отслеживания изменений
+                "state_history": [],
             }
-            _save_monitoring_db_sync(db)
+            await _save_monitoring_db(db)
             logger.info(f"Домен {domain} добавлен в мониторинг для пользователя {user_id}")
             return True
         
         return False
 
 
-def remove_domain_from_monitoring(user_id: int, domain: str) -> bool:
+async def remove_domain_from_monitoring(user_id: int, domain: str) -> bool:
     """Удаляет домен из мониторинга пользователя.
     
     Args:
@@ -123,20 +97,20 @@ def remove_domain_from_monitoring(user_id: int, domain: str) -> bool:
     Returns:
         True если домен был удален, False если его не было
     """
-    with _monitoring_lock:
-        db = _load_monitoring_db_sync()
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
         
         user_key = str(user_id)
         if user_key in db and domain in db[user_key]["domains"]:
             del db[user_key]["domains"][domain]
-            _save_monitoring_db_sync(db)
+            await _save_monitoring_db(db)
             logger.info(f"Домен {domain} удален из мониторинга для пользователя {user_id}")
             return True
         
         return False
 
 
-def get_monitored_domains(user_id: int) -> List[str]:
+async def get_monitored_domains(user_id: int) -> List[str]:
     """Получает список доменов в мониторинге для пользователя.
     
     Args:
@@ -145,23 +119,23 @@ def get_monitored_domains(user_id: int) -> List[str]:
     Returns:
         Список доменов
     """
-    with _monitoring_lock:
-        db = _load_monitoring_db_sync()
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
         user_key = str(user_id)
         if user_key in db:
             return list(db[user_key]["domains"].keys())
         return []
 
 
-def set_monitoring_interval(user_id: int, interval_minutes: int) -> None:
+async def set_monitoring_interval(user_id: int, interval_minutes: int) -> None:
     """Устанавливает интервал проверки для пользователя.
     
     Args:
         user_id: ID пользователя
         interval_minutes: Интервал в минутах
     """
-    with _monitoring_lock:
-        db = _load_monitoring_db_sync()
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
         user_key = str(user_id)
         if user_key not in db:
             db[user_key] = {
@@ -171,10 +145,10 @@ def set_monitoring_interval(user_id: int, interval_minutes: int) -> None:
             }
         else:
             db[user_key]["interval_minutes"] = interval_minutes
-        _save_monitoring_db_sync(db)
+        await _save_monitoring_db(db)
 
 
-def get_monitoring_interval(user_id: int) -> int:
+async def get_monitoring_interval(user_id: int) -> int:
     """Получает интервал проверки для пользователя.
     
     Args:
@@ -183,23 +157,23 @@ def get_monitoring_interval(user_id: int) -> int:
     Returns:
         Интервал в минутах (по умолчанию 15)
     """
-    with _monitoring_lock:
-        db = _load_monitoring_db_sync()
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
         user_key = str(user_id)
         if user_key in db:
             return db[user_key].get("interval_minutes", 15)
         return 15
 
 
-def set_monitoring_enabled(user_id: int, enabled: bool) -> None:
+async def set_monitoring_enabled(user_id: int, enabled: bool) -> None:
     """Включает/выключает мониторинг для пользователя.
     
     Args:
         user_id: ID пользователя
         enabled: Включен ли мониторинг
     """
-    with _monitoring_lock:
-        db = _load_monitoring_db_sync()
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
         user_key = str(user_id)
         if user_key not in db:
             db[user_key] = {
@@ -209,10 +183,10 @@ def set_monitoring_enabled(user_id: int, enabled: bool) -> None:
             }
         else:
             db[user_key]["enabled"] = enabled
-        _save_monitoring_db_sync(db)
+        await _save_monitoring_db(db)
 
 
-def is_monitoring_enabled(user_id: int) -> bool:
+async def is_monitoring_enabled(user_id: int) -> bool:
     """Проверяет, включен ли мониторинг для пользователя.
     
     Args:
@@ -221,8 +195,8 @@ def is_monitoring_enabled(user_id: int) -> bool:
     Returns:
         True если мониторинг включен
     """
-    with _monitoring_lock:
-        db = _load_monitoring_db_sync()
+    async with _monitoring_async_lock:
+        db = await _load_monitoring_db()
         user_key = str(user_id)
         if user_key in db:
             return db[user_key].get("enabled", True)
@@ -241,7 +215,7 @@ async def _get_domain_state(domain: str, user_id: int) -> Dict[str, Any]:
     """
     try:
         # Запускаем проверки параллельно
-        dns_info, ssl_info, waf_enabled = await asyncio.gather(
+        dns_info, ssl_info, waf_result = await asyncio.gather(
             fetch_dns(domain, settings.DNS_TIMEOUT),
             fetch_ssl(domain),
             test_waf(domain, user_id=user_id),
@@ -255,9 +229,15 @@ async def _get_domain_state(domain: str, user_id: int) -> Dict[str, Any]:
         if isinstance(ssl_info, BaseException):
             logger.error(f"Ошибка SSL для {domain}: {ssl_info}")
             ssl_info = {}
-        if isinstance(waf_enabled, BaseException):
-            logger.error(f"Ошибка WAF для {domain}: {waf_enabled}")
+        
+        # Распаковка результата WAF: test_waf возвращает tuple[bool, str]
+        if isinstance(waf_result, BaseException):
+            logger.error(f"Ошибка WAF для {domain}: {waf_result}")
             waf_enabled = False
+        elif isinstance(waf_result, tuple) and len(waf_result) == 2:
+            waf_enabled, _ = waf_result
+        else:
+            waf_enabled = bool(waf_result)
         
         # Убеждаемся, что данные правильного типа
         if not isinstance(ssl_info, dict):
@@ -267,7 +247,7 @@ async def _get_domain_state(domain: str, user_id: int) -> Dict[str, Any]:
         
         return {
             "gost": ssl_info.get("gost", False) if isinstance(ssl_info, dict) else False,
-            "waf": waf_enabled if isinstance(waf_enabled, bool) else False,
+            "waf": bool(waf_enabled),
             "cert_not_after": (
                 ssl_info.get("NotAfter").isoformat() 
                 if isinstance(ssl_info, dict) and ssl_info.get("NotAfter") 

@@ -26,7 +26,18 @@ class TestDomainProcessing:
         
         assert "example.com" in domains
         assert "test.ru" in domains
-        assert "invalid domain" in bad or len(bad) > 0
+        # "invalid" and "domain" are separate tokens after split, both are bad
+        assert len(bad) >= 1
+    
+    @pytest.mark.asyncio
+    async def test_validate_urls_not_in_bad(self):
+        """URLs that normalize successfully should NOT appear in bad list."""
+        raw_text = "https://example.com/path?q=1 http://test.ru"
+        domains, bad = validate_and_normalize_domains(raw_text)
+        
+        assert "example.com" in domains
+        assert "test.ru" in domains
+        assert len(bad) == 0
     
     @pytest.mark.asyncio
     async def test_format_csv_report(self):
@@ -91,22 +102,18 @@ class TestMonitoringIntegration:
             remove_domain_from_monitoring
         )
         
-        user_id = 999999  # Тестовый ID
+        user_id = 999999
         
-        # Добавляем домен
-        result = add_domain_to_monitoring(user_id, "test.example.com")
+        result = await add_domain_to_monitoring(user_id, "test.example.com")
         assert result is True
         
-        # Проверяем, что домен добавлен
-        domains = get_monitored_domains(user_id)
+        domains = await get_monitored_domains(user_id)
         assert "test.example.com" in domains
         
-        # Удаляем домен
-        result = remove_domain_from_monitoring(user_id, "test.example.com")
+        result = await remove_domain_from_monitoring(user_id, "test.example.com")
         assert result is True
         
-        # Проверяем, что домен удален
-        domains = get_monitored_domains(user_id)
+        domains = await get_monitored_domains(user_id)
         assert "test.example.com" not in domains
 
 

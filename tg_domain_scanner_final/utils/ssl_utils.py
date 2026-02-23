@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import ssl
 import os
 import random
@@ -73,40 +74,8 @@ else:
     _hosts: List[str] = [h.strip() for h in os.getenv("GOSTSSL_HOSTS", "gostsslcheck").split(',') if h.strip()]
     _endpoints: List[str] = [f"http://{h}:8080/check" for h in _hosts]
 
-# Резервный вариант при массовых 504 - WireGuard подключение
-
-# Глобальный connector для переиспользования соединений
-_gost_connector: Optional[aiohttp.TCPConnector] = None
-
-
-def _get_gost_connector() -> aiohttp.TCPConnector:
-    """Получает или создает глобальный connector для Gost запросов.
-    
-    Returns:
-        TCPConnector для переиспользования соединений
-    """
-    global _gost_connector
-    try:
-        # Проверяем, что connector существует и не закрыт
-        # У TCPConnector есть только атрибут `closed`, не `is_closed`
-        if _gost_connector is None or _gost_connector.closed:
-            _gost_connector = None  # Сбрасываем перед созданием нового
-            _gost_connector = aiohttp.TCPConnector(
-                limit=20,
-                limit_per_host=5,
-                force_close=False,  # Переиспользование соединений
-                ttl_dns_cache=300,
-            )
-    except Exception as e:
-        logger.warning(f"Ошибка при проверке connector: {e}, создаем новый")
-        _gost_connector = None
-        _gost_connector = aiohttp.TCPConnector(
-            limit=20,
-            limit_per_host=5,
-            force_close=False,
-            ttl_dns_cache=300,
-        )
-    return _gost_connector
+# Резервный вариант при массовых 504 — прямая проверка через WireGuard
+_GOST_RE = re.compile(r"(GOST[^\s]*|1\.2\.643\.)")
 
 
 async def _check_single_endpoint(url: str, domain: str, timeout: int) -> tuple[Optional[bool], Optional[Exception], bool]:
@@ -279,64 +248,70 @@ async def _remote_is_gost(domain: str, timeout: Optional[int] = None) -> Optiona
         last_error = asyncio.TimeoutError("Total timeout")
         checked_endpoints = len(endpoints)  # Все задачи были отменены
     
-    # WireGuard используется ТОЛЬКО если:
-    # 1. Все проверенные endpoints вернули 504 (all_504_errors == True)
-    # 2. Проверены ВСЕ endpoints (checked_endpoints == len(endpoints))
-    # 3. Есть ошибка (last_error не None)
-    # Это гарантирует что WireGuard - резерв, а не основной путь
+    # WireGuard fallback: прямая проверка GOST через openssl subprocess.
+    # Используется ТОЛЬКО когда ВСЕ gostsslcheck контейнеры вернули 504,
+    # что означает проблему с исходящим доступом у контейнеров.
+    # В этом случае маршрутизируем через WireGuard VPN напрямую.
     if all_504_errors and checked_endpoints == len(endpoints) and last_error:
-        logger.info(f"Все endpoints вернули 504 для {domain}, пробуем через WireGuard подключение")
+        logger.info(f"Все endpoints вернули 504 для {domain}, пробуем прямую проверку через WireGuard")
         try:
-            # Проверяем доступность WireGuard контейнера
             if not ensure_wg_interface_up():
                 logger.warning(f"WireGuard контейнер недоступен для {domain}")
             else:
-                # WireGuard теперь работает в отдельном контейнере
-                # Запросы автоматически идут через WireGuard сеть благодаря Docker network
-                # Используем обычный connector без local_addr привязки
-                wg_timeout = aiohttp.ClientTimeout(total=timeout)
-                connector = aiohttp.TCPConnector(
-                    limit=10,
-                    limit_per_host=3,
-                    force_close=True,
-                    ttl_dns_cache=300
-                )
-                
-                async with aiohttp.ClientSession(
-                    timeout=wg_timeout,
-                    connector=connector
-                ) as session:
-                    # Пробуем первый endpoint через WireGuard сеть
-                    if _endpoints:
-                        wg_url = _endpoints[0]
-                        try:
-                            async with session.get(
-                                wg_url,
-                                params={"domain": domain}
-                            ) as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    result = bool(data.get("is_gost"))
-                                    logger.info(f"✅ GOST проверка для {domain} через WireGuard: {result}")
-                                    return result
-                                else:
-                                    logger.warning(f"WireGuard подключение вернуло статус {resp.status} для {domain}")
-                        except asyncio.TimeoutError:
-                            logger.warning(f"Таймаут при использовании WireGuard для {domain}")
-                        except (aiohttp.ClientError, RuntimeError) as wg_error:
-                            logger.warning(f"Ошибка при использовании WireGuard для {domain}: {wg_error}")
-                        except Exception as wg_error:
-                            logger.error(f"Неожиданная ошибка при использовании WireGuard для {domain}: {wg_error}", exc_info=True)
-                        finally:
-                            try:
-                                await connector.close()
-                            except Exception:
-                                pass
+                wg_result = await _direct_gost_check(domain, timeout)
+                if wg_result is not None:
+                    logger.info(f"GOST проверка для {domain} через WireGuard: {wg_result}")
+                    return wg_result
+                logger.warning(f"Прямая GOST проверка через WireGuard не дала результата для {domain}")
         except Exception as e:
-            logger.warning(f"Не удалось использовать WireGuard подключение для {domain}: {e}")
+            logger.warning(f"Не удалось выполнить прямую GOST проверку для {domain}: {e}")
     
     logger.error(f"Все GOST endpoints недоступны для {domain}. Последняя ошибка: {last_error}")
     return None
+
+
+async def _direct_gost_check(domain: str, timeout: int) -> Optional[bool]:
+    """Прямая проверка GOST сертификата через openssl subprocess.
+    
+    Используется как fallback когда все gostsslcheck контейнеры недоступны.
+    Подключается к домену напрямую (трафик идёт через WireGuard VPN).
+    
+    Args:
+        domain: Домен для проверки
+        timeout: Таймаут в секундах
+        
+    Returns:
+        True если GOST обнаружен, False если нет, None при ошибке
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "openssl", "s_client",
+            "-connect", f"{domain}:443",
+            "-servername", domain,
+            "-showcerts",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.warning(f"Таймаут при прямой GOST проверке для {domain}")
+            return None
+
+        output = stdout.decode("utf-8", errors="replace")
+        if not output:
+            return None
+
+        return bool(_GOST_RE.search(output))
+    except FileNotFoundError:
+        logger.debug("openssl не найден для прямой GOST проверки")
+        return None
+    except Exception as e:
+        logger.warning(f"Ошибка при прямой GOST проверке для {domain}: {e}")
+        return None
 
 
 async def _get_gost_certificate_info(domain: str, port: int = 443) -> Optional[Dict[str, Any]]:

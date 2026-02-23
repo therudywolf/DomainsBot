@@ -176,11 +176,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    """TCP сервер с поддержкой параллельной обработки запросов."""
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
-    httpd = socketserver.TCPServer(("", port), Handler)
+    httpd = ThreadedTCPServer(("", port), Handler)
     try:
-        logger.info("GostSSLCheck server started on port %d", port)
+        logger.info("GostSSLCheck server started on port %d (threaded)", port)
         httpd.serve_forever()
     except KeyboardInterrupt:
         logger.info("Received stop signal")

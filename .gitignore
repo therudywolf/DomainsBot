@@ -47,5 +47,12 @@ data/bot.log*
 Thumbs.db
 .DS_Store
 
+# Data
+data/*.json
+data/*.db
+
 # WireGuard
 wg/TGBOT.conf
+
+# Cursor
+.cursor/

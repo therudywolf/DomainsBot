@@ -37,7 +37,8 @@ def format_csv_report(
     if brief:
         writer.writerow([
             "Domain", "CN", "Valid From", "Valid To", 
-            "GOST Cert From", "GOST Cert To", "WAF", "GOST"
+            "GOST Cert From", "GOST Cert To", "WAF", "GOST",
+            "HTTPS", "Server", "SPF", "DMARC",
         ])
     else:
         writer.writerow([
@@ -46,6 +47,8 @@ def format_csv_report(
             "AAAA",
             "MX",
             "NS",
+            "TXT",
+            "CAA",
             "CN",
             "Valid From",
             "Valid To",
@@ -53,29 +56,33 @@ def format_csv_report(
             "GOST Cert To",
             "WAF",
             "GOST",
+            "HTTPS",
+            "Server",
+            "SPF",
+            "DMARC",
         ])
+
+    def _fmt_date(dt):
+        if dt is None:
+            return ""
+        if hasattr(dt, "date"):
+            return dt.date().isoformat()
+        return str(dt)
 
     for domain, dns_info, ssl_info, waf_enabled, waf_method in collected:
         gost_val = "Да" if ssl_info.get("gost") else "Нет"
         waf_val = "Да" if waf_enabled else "Нет"
-        
-        # Форматируем даты
-        def format_date(dt):
-            if dt is None:
-                return ""
-            if hasattr(dt, 'date'):
-                return dt.date().isoformat()
-            return str(dt)
-        
+
         row_base = [
             domain,
             ssl_info.get("CN") or "",
-            format_date(ssl_info.get("NotBefore")),
-            format_date(ssl_info.get("NotAfter")),
-            format_date(ssl_info.get("GostNotBefore")),
-            format_date(ssl_info.get("GostNotAfter")),
+            _fmt_date(ssl_info.get("NotBefore")),
+            _fmt_date(ssl_info.get("NotAfter")),
+            _fmt_date(ssl_info.get("GostNotBefore")),
+            _fmt_date(ssl_info.get("GostNotAfter")),
             waf_val,
             gost_val,
+            "", "", "", "",  # HTTPS, Server, SPF, DMARC — populated by extended pipeline
         ]
 
         if brief:
@@ -87,6 +94,8 @@ def format_csv_report(
                 ",".join(dns_info.get("AAAA", [])),
                 ",".join(dns_info.get("MX", [])),
                 ",".join(dns_info.get("NS", [])),
+                ",".join(dns_info.get("TXT", [])[:3]),
+                ",".join(dns_info.get("CAA", [])),
                 *row_base[1:],
             ])
 

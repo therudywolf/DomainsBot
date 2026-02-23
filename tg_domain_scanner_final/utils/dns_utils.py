@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from utils.cache import ttl_cache
-import dns.asyncresolver
 import socket
 from typing import Dict, List
 
+import dns.asyncresolver
+
+from utils.cache import ttl_cache
 from utils.types import DNSInfo
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,14 @@ async def _query(resolver: dns.asyncresolver.Resolver, domain: str, rdtype: str)
         return []
 
 
+def _blocking_gethostbyname(domain: str) -> List[str]:
+    """Обёртка для socket.gethostbyname_ex — вызывается в executor."""
+    try:
+        return socket.gethostbyname_ex(domain)[2]
+    except socket.gaierror:
+        return []
+
+
 @ttl_cache()
 async def fetch_dns(domain: str, timeout: int = 5) -> Dict[str, List[str]]:
     """Получает DNS записи для домена.
@@ -50,23 +60,31 @@ async def fetch_dns(domain: str, timeout: int = 5) -> Dict[str, List[str]]:
     resolver = dns.asyncresolver.Resolver()
     resolver.lifetime = timeout
     
-    res: Dict[str, List[str]] = {k: [] for k in ("A", "AAAA", "MX", "NS", "IP")}
+    res: Dict[str, List[str]] = {k: [] for k in ("A", "AAAA", "MX", "NS", "IP", "TXT", "CAA", "SOA")}
     
-    # Получаем записи разных типов
-    for rt in ("A", "AAAA", "MX", "NS"):
+    for rt in ("A", "AAAA", "MX", "NS", "TXT", "CAA"):
         res[rt] = await _query(resolver, domain, rt)
     
-    # IP - это дубликат A для совместимости со старым кодом
+    # SOA — single record, still stored as list for uniformity
+    try:
+        soa_answer = await resolver.resolve(domain, "SOA")
+        for rr in soa_answer:
+            res["SOA"].append(rr.to_text())
+    except Exception as e:
+        logger.debug(f"Ошибка при запросе SOA для {domain}: {e}")
+    
     res["IP"] = res["A"].copy()
     
-    # Дополнительно пытаемся получить IP через socket (может дать другие результаты)
+    loop = asyncio.get_running_loop()
     try:
-        socket_ips = socket.gethostbyname_ex(domain)[2]
-        # Объединяем с уже полученными
+        socket_ips = await asyncio.wait_for(
+            loop.run_in_executor(None, _blocking_gethostbyname, domain),
+            timeout=timeout,
+        )
         for ip in socket_ips:
             if ip not in res["IP"]:
                 res["IP"].append(ip)
-    except socket.gaierror:
-        pass
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.debug(f"socket.gethostbyname_ex для {domain} не удался: {e}")
     
     return res

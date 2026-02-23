@@ -137,6 +137,8 @@ def build_report(
     brief: bool = False,
     max_san: int = 5,
     waf_method: Optional[str] = None,
+    http_info: Optional[Dict[str, Any]] = None,
+    email_security: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Формирует красивый и структурированный отчет о сканировании домена.
@@ -331,6 +333,77 @@ def build_report(
     else:
         gost_status = "❌ Не обнаружен"
     lines.append(f"   <b>GOST сертификат:</b> {gost_status}")
+    
+    # --- HTTP info section ---
+    if http_info:
+        lines.append("")
+        lines.append("🌍 <b>HTTP</b>")
+        server = http_info.get("server")
+        if server:
+            lines.append(f"   <b>Сервер:</b> {server}")
+        if http_info.get("https_available"):
+            lines.append("   <b>HTTPS:</b> ✅ доступен")
+        else:
+            lines.append("   <b>HTTPS:</b> ❌ недоступен")
+        if http_info.get("http_to_https_redirect"):
+            lines.append("   <b>HTTP→HTTPS:</b> ✅ перенаправление")
+        chain = http_info.get("redirect_chain") or []
+        if chain and len(chain) > 1:
+            lines.append(f"   <b>Редиректы:</b> {len(chain) - 1} шагов → {chain[-1]}")
+        sec_headers = http_info.get("security_headers") or {}
+        if sec_headers and not brief:
+            present = [k for k, v in sec_headers.items() if v]
+            missing = [k for k, v in sec_headers.items() if not v]
+            _header_labels = {
+                "strict_transport_security": "HSTS",
+                "x_frame_options": "X-Frame-Options",
+                "x_content_type_options": "X-Content-Type-Options",
+                "content_security_policy": "CSP",
+                "permissions_policy": "Permissions-Policy",
+                "x_xss_protection": "X-XSS-Protection",
+            }
+            if present:
+                labels = ", ".join(_header_labels.get(h, h) for h in present)
+                lines.append(f"   <b>Заголовки безопасности:</b> ✅ {labels}")
+            if missing:
+                labels = ", ".join(_header_labels.get(h, h) for h in missing)
+                lines.append(f"   <b>Отсутствуют:</b> ❌ {labels}")
+    
+    # --- Email security section ---
+    if email_security and not brief:
+        lines.append("")
+        lines.append("📧 <b>Email Security</b>")
+        spf_valid = email_security.get("spf_valid", False)
+        spf_rec = email_security.get("spf")
+        if spf_valid:
+            lines.append(f"   <b>SPF:</b> ✅ {spf_rec[:60] + '…' if spf_rec and len(spf_rec) > 60 else spf_rec or '—'}")
+        else:
+            lines.append("   <b>SPF:</b> ❌ не найден")
+        dmarc_rec = email_security.get("dmarc")
+        dmarc_policy = email_security.get("dmarc_policy")
+        if dmarc_rec:
+            pol_label = dmarc_policy or "не указана"
+            lines.append(f"   <b>DMARC:</b> ✅ (политика: {pol_label})")
+        else:
+            lines.append("   <b>DMARC:</b> ❌ не найден")
+    
+    # --- Extended DNS section ---
+    if not brief:
+        txt_records = dns.get("TXT", [])
+        caa_records = dns.get("CAA", [])
+        if txt_records or caa_records:
+            lines.append("")
+            lines.append("📋 <b>Расширенные DNS</b>")
+            if txt_records:
+                txt_display = txt_records[:3]
+                for t in txt_display:
+                    short = t[:80] + "…" if len(t) > 80 else t
+                    lines.append(f"   <b>TXT:</b> {short}")
+                if len(txt_records) > 3:
+                    lines.append(f"   <i>... ещё {len(txt_records) - 3} TXT записей</i>")
+            if caa_records:
+                for c in caa_records[:3]:
+                    lines.append(f"   <b>CAA:</b> {c}")
     
     return "\n".join(lines)
 
