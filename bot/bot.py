@@ -48,6 +48,43 @@ logger = logging.getLogger(__name__)
 _shutdown_event = asyncio.Event()
 
 
+# ---------- Deduplication (group chats: avoid processing same message twice) ----------
+
+_processed_messages: dict[tuple[int, int], float] = {}
+_DEDUP_TTL = 60.0
+_DEDUP_MAX_SIZE = 5000
+
+
+def _dedup_cleanup(now: float) -> None:
+    """Удаляет записи старше TTL и ограничивает размер хранилища."""
+    global _processed_messages
+    expired = [k for k, t in _processed_messages.items() if now - t > _DEDUP_TTL]
+    for k in expired:
+        del _processed_messages[k]
+    if len(_processed_messages) > _DEDUP_MAX_SIZE:
+        by_time = sorted(_processed_messages.items(), key=lambda x: x[1])
+        for (k, _) in by_time[: _DEDUP_MAX_SIZE // 2]:
+            del _processed_messages[k]
+
+
+class DeduplicationMiddleware:
+    """Пропускает повторную обработку одного и того же сообщения (chat_id, message_id)."""
+
+    async def __call__(self, handler, event, data):
+        if not isinstance(event, types.Message):
+            return await handler(event, data)
+        now = asyncio.get_running_loop().time()
+        key = (event.chat.id, event.message_id)
+        if key in _processed_messages and (now - _processed_messages[key]) < _DEDUP_TTL:
+            logger.debug(
+                f"Пропуск дубликата сообщения chat_id={event.chat.id} message_id={event.message_id}"
+            )
+            return None
+        _processed_messages[key] = now
+        _dedup_cleanup(now)
+        return await handler(event, data)
+
+
 # ---------- Logging middleware ----------
 
 class LoggingMiddleware:
@@ -222,6 +259,7 @@ async def main():
     dp.include_router(callbacks_router)
     dp.include_router(text_router)
 
+    dp.message.middleware(DeduplicationMiddleware())
     dp.message.middleware(LoggingMiddleware())
     dp.callback_query.middleware(LoggingMiddleware())
 

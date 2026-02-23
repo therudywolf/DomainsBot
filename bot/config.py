@@ -57,6 +57,9 @@ class Settings:
     # Кэширование
     CACHE_TTL_SECONDS: int = 3600  # Время жизни кэша в секундах (1 час)
 
+    # Группы: реагировать только при упоминании бота или ответе на его сообщение
+    BOT_GROUP_MENTION_ONLY: bool = True
+
 
 def _get_env_int(key: str, default: int, minimum: int = 0) -> int:
     """Получает целое число из переменной окружения с валидацией минимума."""
@@ -110,4 +113,5 @@ settings = Settings(
     MAX_DOMAINS_PER_REQUEST=_get_env_int("MAX_DOMAINS_PER_REQUEST", 1000),
     MAX_FILE_SIZE_MB=_get_env_int("MAX_FILE_SIZE_MB", 10),
     CACHE_TTL_SECONDS=_get_env_int("CACHE_TTL_SECONDS", 3600),
+    BOT_GROUP_MENTION_ONLY=_get_env_bool("BOT_GROUP_MENTION_ONLY", True),
 )

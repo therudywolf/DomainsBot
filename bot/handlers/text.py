@@ -347,11 +347,28 @@ async def handle_document(message: types.Message, state: FSMContext):
         chat_title = message.chat.title or f"Chat {message.chat.id}"
         chat_type = message.chat.type
         register_chat(user_id, message.chat.id, chat_title, chat_type)
-    
+
+    # В группах: обрабатывать только при упоминании бота или ответе на его сообщение
+    if settings.BOT_GROUP_MENTION_ONLY and message.chat.type in ("group", "supergroup"):
+        from access import get_bot_username
+        bot_username = await get_bot_username(message.bot)
+        reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and getattr(message.reply_to_message.from_user, "is_bot", False)
+        )
+        caption_lower = (message.caption or "").lower()
+        mentioned = f"@{bot_username}".lower() in caption_lower
+        if not reply_to_bot and not mentioned:
+            logger.debug(
+                f"Пропуск файла в группе без упоминания/ответа | chat_id={message.chat.id}"
+            )
+            return
+
     # Проверка доступа
     if not await check_access(message):
         return
-    
+
     # Проверка rate limit (загрузка файлов)
     if not await check_rate_limit(user_id, operation_type="file_upload"):
         remaining = await get_remaining_requests(user_id, operation_type="file_upload")
@@ -456,7 +473,7 @@ async def handle_text(message: types.Message, state: FSMContext):
         chat_type = message.chat.type
         register_chat(user_id, message.chat.id, chat_title, chat_type)
         logger.debug(f"Чат зарегистрирован: {chat_title} (ID: {message.chat.id})")
-    
+
     # Проверка доступа
     if not await check_access(message):
         logger.warning(f"❌ Доступ запрещен для user_id={user_id}")
@@ -538,6 +555,22 @@ async def handle_text(message: types.Message, state: FSMContext):
     
     # Если это не команда меню, обрабатываем как домены
     if text:
+        # В группах: обрабатывать запрос доменов только при упоминании бота или ответе на него
+        if settings.BOT_GROUP_MENTION_ONLY and message.chat.type in ("group", "supergroup"):
+            from access import get_bot_username
+            bot_username = await get_bot_username(message.bot)
+            reply_to_bot = (
+                message.reply_to_message
+                and message.reply_to_message.from_user
+                and getattr(message.reply_to_message.from_user, "is_bot", False)
+            )
+            text_lower = text.lower()
+            mentioned = f"@{bot_username}".lower() in text_lower
+            if not reply_to_bot and not mentioned:
+                logger.debug(
+                    f"Пропуск доменов в группе без упоминания/ответа | chat_id={message.chat.id}"
+                )
+                return
         logger.debug(f"Обработка доменов из текста для user_id={user_id}")
         try:
             await _process_domains(message, state, text)
